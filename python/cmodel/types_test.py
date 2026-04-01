@@ -69,9 +69,6 @@ class _DoubleModel(CModel):
     field: Double
 
 
-# --- Scalar alias round-trip tests ---
-
-
 @pytest.mark.parametrize(
     ("model_cls", "fmt_char", "value"),
     [

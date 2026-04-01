@@ -32,9 +32,6 @@ class TupleModel(CModel):
     coords: An[tuple[int, int, int], c_int(3)]
 
 
-# --- Fixtures ---
-
-
 @pytest.fixture
 def point_model():
     return PointModel(x=3, y=7)
