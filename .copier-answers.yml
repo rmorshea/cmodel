@@ -1,0 +1,10 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v2026.02.4
+_src_path: https://github.com/rmorshea/python-copier-template
+author_email: ryan.morshead@gmail.com
+author_name: Ryan Morshead
+project_description: Model C structs with Pydantic
+project_title: CModel
+python_package_name: cmodel
+python_version_range: '>=3.12'
+repo_url: https://github.com/rmorshea/cmodel
