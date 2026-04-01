@@ -112,6 +112,8 @@ ignore = [
     "S105",   # Ignore checks for possible passwords
     "SIM117", # Use a single `with` statement
     "ISC001", # implicitly concatenated strings on a single line
+    "TD",     # Allow TODO comments
+    "FIX",    # Allow FIXME comments
 ]
 unfixable = [
     "COM819", # Trailing comma

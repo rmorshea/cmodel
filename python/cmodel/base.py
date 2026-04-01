@@ -117,9 +117,10 @@ type _Recurse = Callable[[cs.CoreSchema, _Recurse], cs.CoreSchema]
 class _ModelSchemaAdapter:
     _VISIT_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
         "tuple",
+        "model",
+        "definition-ref",
     }
     _ALLOWED_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "model",
         "model-fields",
         "function-before",
         "default",
@@ -169,7 +170,19 @@ class _ModelSchemaAdapter:
         )
 
     def visit_model(self, schema: cs.ModelSchema, recurse: _Recurse) -> cs.CoreSchema:
+        if not issubclass(schema["cls"], CModel):
+            msg = f"All models used in a CModel must inherit from CModel, got {schema['cls']!r}"
+            raise TypeError(msg)
         return recurse(schema, self.visit)
+
+    def visit_definition_ref(
+        self, schema: cs.DefinitionReferenceSchema, recurse: _Recurse
+    ) -> cs.CoreSchema:
+        resolved_schema = self.handler.resolve_ref_schema(schema)
+        # TODO: only recurse until hitting a CModel since we know that's been adapted already
+        recurse(resolved_schema, self.visit)
+        # Return the ref - no need to duplicated it
+        return schema
 
 
 class _Context(TypedDict):
