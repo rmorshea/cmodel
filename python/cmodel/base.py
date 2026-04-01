@@ -23,9 +23,6 @@ from pydantic_walk_core_schema import walk_core_schema
 class CModel(BaseModel):
     """Base class for models that can be packed/unpacked to/from C binary data."""
 
-    c_field_formats: ClassVar[tuple[str, ...]] = ()
-    """The struct format strings for each field used to pack/unpack the C binary data."""
-
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
@@ -40,9 +37,7 @@ class CModel(BaseModel):
         else:
             # we're defining the schema for a subclass
             adapter = _ModelSchemaAdapter(handler)
-            schema = adapter.adapt(handler(source))
-            cls.c_format = tuple(adapter.format)
-            return schema
+            return adapter.adapt(handler(source))
 
     @classmethod
     def c_unpack(cls, buffer: BytesIO) -> Self:
@@ -129,6 +124,7 @@ class _ModelSchemaAdapter:
     def __init__(self, handler: GetCoreSchemaHandler) -> None:
         self.handler = handler
         self.format: list[str] = []
+        self.in_ref = False
         self.visitors: dict[str, _Recurse] = {}
         for schema_type in self._VISIT_TYPES:
             method_name = f"visit_{schema_type.replace('-', '_')}"
@@ -173,14 +169,23 @@ class _ModelSchemaAdapter:
         if not issubclass(schema["cls"], CModel):
             msg = f"All models used in a CModel must inherit from CModel, got {schema['cls']!r}"
             raise TypeError(msg)
-        return recurse(schema, self.visit)
+
+        if self.in_ref:
+            return schema
+        else:
+            return recurse(schema, self.visit)
 
     def visit_definition_ref(
         self, schema: cs.DefinitionReferenceSchema, recurse: _Recurse
     ) -> cs.CoreSchema:
         resolved_schema = self.handler.resolve_ref_schema(schema)
-        # TODO: only recurse until hitting a CModel since we know that's been adapted already
-        recurse(resolved_schema, self.visit)
+
+        self.in_ref = True
+        try:
+            recurse(resolved_schema, self.visit)
+        finally:
+            self.in_ref = False
+
         # Return the ref - no need to duplicated it
         return schema
 
