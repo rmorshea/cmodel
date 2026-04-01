@@ -73,7 +73,7 @@ class _DoubleModel(CModel):
 
 
 @pytest.mark.parametrize(
-    "model_cls,fmt_char,value",
+    ("model_cls", "fmt_char", "value"),
     [
         (_SignedCharModel, "b", 42),
         (_SignedCharModel, "b", -42),
@@ -99,7 +99,7 @@ def test_scalar_unpack(model_cls, fmt_char, value):
 
 
 @pytest.mark.parametrize(
-    "model_cls,fmt_char,value",
+    ("model_cls", "fmt_char", "value"),
     [
         (_SignedCharModel, "b", 42),
         (_UnsignedCharModel, "B", 200),
@@ -137,7 +137,7 @@ class _DoublePairModel(CModel):
 
 
 @pytest.mark.parametrize(
-    "model_cls,fmt,values",
+    ("model_cls", "fmt", "values"),
     [
         (_IntPairModel, "ii", (1, 2)),
         (_BoolTripleModel, "???", (True, False, True)),
@@ -152,7 +152,7 @@ def test_multi_count_unpack(model_cls, fmt, values):
 
 
 @pytest.mark.parametrize(
-    "model_cls,fmt,values",
+    ("model_cls", "fmt", "values"),
     [
         (_IntPairModel, "ii", (1, 2)),
         (_BoolTripleModel, "???", (True, False, True)),

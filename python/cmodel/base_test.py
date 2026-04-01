@@ -57,7 +57,7 @@ def test_pack_writes_fields_in_order(point_model):
     assert buf.getvalue() == struct.pack("ii", 3, 7)
 
 
-@pytest.mark.parametrize("x,y", [(0, 0), (1, -1), (2**30, -(2**30))])
+@pytest.mark.parametrize(("x", "y"), [(0, 0), (1, -1), (2**30, -(2**30))])
 def test_roundtrip(x, y):
     model = PointModel(x=x, y=y)
     buf = BytesIO()
