@@ -13,8 +13,11 @@ from typing import overload
 
 from pydantic import BaseModel
 from pydantic import GetCoreSchemaHandler
+from pydantic import ModelWrapValidatorHandler
 from pydantic import SerializationInfo
+from pydantic import SerializerFunctionWrapHandler
 from pydantic import ValidationInfo
+from pydantic import model_serializer
 from pydantic import model_validator
 from pydantic_core import core_schema as cs
 from pydantic_walk_core_schema import walk_core_schema
@@ -22,6 +25,13 @@ from pydantic_walk_core_schema import walk_core_schema
 
 class CModel(BaseModel):
     """Base class for models that can be packed/unpacked to/from C binary data."""
+
+    c_align: ClassVar[int]
+    """The alignment of the C struct this model represents.
+
+    If not specified, the alignment will be calculated as the maximum alignment of the fields in
+    the model. This attribute is not inherited and  must be specified explicitely on each subclass.
+    """
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -37,28 +47,59 @@ class CModel(BaseModel):
         else:
             # we're defining the schema for a subclass
             adapter = _ModelSchemaAdapter(handler)
-            return adapter.adapt(handler(source))
+            schema = adapter.adapt(handler(source))
+            cls.c_align = max(adapter.field_alignments, default=1)
+            return schema
 
     @classmethod
     def c_unpack(cls, buffer: BytesIO) -> Self:
         """Read a C binary data buffer as a packed struct and return an instance of the model."""
-        ctx: _Context = {"io": buffer}
+        ctx: _Context = {"io": buffer, "align": 0}
         return cls.model_validate(_USE_BUFFER, context={_CONTEXT_KEY: ctx})
 
     def c_pack(self, buffer: BytesIO) -> None:
         """Write the model instance to a C binary data buffer as a packed struct."""
-        ctx: _Context = {"io": buffer}
+        ctx: _Context = {"io": buffer, "align": 0}
         self.model_dump(context={_CONTEXT_KEY: ctx})
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def _validate_model(cls, value: Any) -> Any:
+    def _validate_model(
+        cls,
+        value: Any,
+        handler: ModelWrapValidatorHandler,
+        info: cs.ValidationInfo,
+    ) -> Any:
         if value is _USE_BUFFER:
             # Indicate that we're unpacking by ensuring each field is present and gets "validated".
-            # The validator for each field will then read from the buffer.
-            return dict.fromkeys(cls.model_fields, _USE_BUFFER)
+            # The validator for each field will then read from the buffer because of _USE_BUFFER
+            value = dict.fromkeys(cls.model_fields, _USE_BUFFER)
+            # Update the alignment for fields in this model.
+            ctx = _get_context(info, required=True)
+            old_align = cls.c_align
+            ctx["align"] = cls.c_align
+            try:
+                return handler(value)
+            finally:
+                ctx["align"] = old_align
         else:
             return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_model(
+        self, handler: SerializerFunctionWrapHandler, info: cs.SerializationInfo
+    ) -> Any:
+        if ctx := _get_context(info):
+            # Update the alignment for fields in this model.
+            ctx = _get_context(info, required=True)
+            old_align = self.c_align
+            ctx["align"] = self.c_align
+            try:
+                return handler(self)
+            finally:
+                ctx["align"] = old_align
+        else:
+            return handler(self)
 
 
 @dataclass
@@ -83,15 +124,19 @@ class CFmt[T]:
             if value is _USE_BUFFER:
                 ctx = _get_context(info, required=True)
                 io = ctx["io"]
+                align = ctx["align"]
                 value = unpack_from(fmt, io.getbuffer(), io.tell())
-                io.seek(size, 1)
+                io.seek(size + (align - (size % align)) % align, 1)
                 return validate(value)
             else:
                 return value
 
         def serializer(value: Any, info: SerializationInfo) -> Any:
             if ctx := _get_context(info):
-                ctx["io"].write(pack(fmt, *dump(value)))
+                io = ctx["io"]
+                align = ctx["align"]
+                io.write(pack(fmt, *dump(value)))
+                io.write(b"\x00" * ((align - (size % align)) % align))
             else:
                 return value
 
@@ -114,9 +159,9 @@ class _ModelSchemaAdapter:
         "tuple",
         "model",
         "definition-ref",
+        "model-fields",
     }
     _ALLOWED_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "model-fields",
         "function-before",
         "default",
     }
@@ -125,6 +170,7 @@ class _ModelSchemaAdapter:
         self.handler = handler
         self.format: list[str] = []
         self.in_ref = False
+        self.field_alignments: list[int] = []
         self.visitors: dict[str, _Recurse] = {}
         for schema_type in self._VISIT_TYPES:
             method_name = f"visit_{schema_type.replace('-', '_')}"
@@ -175,6 +221,15 @@ class _ModelSchemaAdapter:
         else:
             return recurse(schema, self.visit)
 
+    def visit_model_fields(self, schema: cs.ModelFieldsSchema, recurse: _Recurse) -> cs.CoreSchema:
+        for field in schema["fields"].values():
+            self.field_alignments.append(0)
+            try:
+                field["schema"] = recurse(field["schema"], self.visit)
+            finally:
+                self.field_alignments.pop()
+        return schema
+
     def visit_definition_ref(
         self, schema: cs.DefinitionReferenceSchema, recurse: _Recurse
     ) -> cs.CoreSchema:
@@ -192,6 +247,7 @@ class _ModelSchemaAdapter:
 
 class _Context(TypedDict):
     io: BytesIO
+    align: int
 
 
 @overload
