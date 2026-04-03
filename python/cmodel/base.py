@@ -26,7 +26,7 @@ from pydantic_walk_core_schema import walk_core_schema
 class CModel(BaseModel):
     """Base class for models that can be packed/unpacked to/from C binary data."""
 
-    c_align: ClassVar[int]
+    c_alignment: ClassVar[int]
     """The alignment of the C struct this model represents.
 
     If not specified, the alignment will be calculated as the maximum alignment of the fields in
@@ -48,18 +48,19 @@ class CModel(BaseModel):
             # we're defining the schema for a subclass
             adapter = _ModelSchemaAdapter(handler)
             schema = adapter.adapt(handler(source))
-            cls.c_align = max(adapter.field_alignments, default=1)
+            if "c_alignment" not in cls.__dict__:
+                cls.c_alignment = _get_struct_alignment(adapter.member_alignments)
             return schema
 
     @classmethod
     def c_unpack(cls, buffer: BytesIO) -> Self:
         """Read a C binary data buffer as a packed struct and return an instance of the model."""
-        ctx: _Context = {"io": buffer, "align": 0}
+        ctx: _Context = {"io": buffer, "alignment": 0}
         return cls.model_validate(_USE_BUFFER, context={_CONTEXT_KEY: ctx})
 
     def c_pack(self, buffer: BytesIO) -> None:
         """Write the model instance to a C binary data buffer as a packed struct."""
-        ctx: _Context = {"io": buffer, "align": 0}
+        ctx: _Context = {"io": buffer, "alignment": 0}
         self.model_dump(context={_CONTEXT_KEY: ctx})
 
     @model_validator(mode="wrap")
@@ -69,19 +70,14 @@ class CModel(BaseModel):
         value: Any,
         handler: ModelWrapValidatorHandler,
         info: cs.ValidationInfo,
-    ) -> Any:
-        if value is _USE_BUFFER:
-            # Indicate that we're unpacking by ensuring each field is present and gets "validated".
-            # The validator for each field will then read from the buffer because of _USE_BUFFER
-            value = dict.fromkeys(cls.model_fields, _USE_BUFFER)
-            # Update the alignment for fields in this model.
-            ctx = _get_context(info, required=True)
-            old_align = cls.c_align
-            ctx["align"] = cls.c_align
+    ) -> "CModel":
+        if ctx := _get_context(info):
+            old_align = cls.c_alignment
+            ctx["alignment"] = cls.c_alignment
             try:
                 return handler(value)
             finally:
-                ctx["align"] = old_align
+                ctx["alignment"] = old_align
         else:
             return value
 
@@ -89,15 +85,15 @@ class CModel(BaseModel):
     def _serialize_model(
         self, handler: SerializerFunctionWrapHandler, info: cs.SerializationInfo
     ) -> Any:
-        if ctx := _get_context(info):
+        if ctx := _get_context(info) and isinstance(self, CModel):
             # Update the alignment for fields in this model.
             ctx = _get_context(info, required=True)
-            old_align = self.c_align
-            ctx["align"] = self.c_align
+            old_align = self.c_alignment
+            ctx["alignment"] = self.c_alignment
             try:
                 return handler(self)
             finally:
-                ctx["align"] = old_align
+                ctx["alignment"] = old_align
         else:
             return handler(self)
 
@@ -109,6 +105,16 @@ class CFmt[T]:
     fmt: str
     validate: Callable[[tuple[Any, ...]], T] = lambda x: x  # pyright: ignore[reportAssignmentType]
     dump: Callable[[T], tuple[Any, ...]] = lambda x: x  # pyright: ignore[reportAssignmentType]
+
+    def __post_init__(self) -> None:
+        if self.fmt.startswith(("@", "=", "<", ">", "!")):
+            msg = "Format string should not include byte order or alignment characters"
+            raise ValueError(msg)
+
+    @property
+    def alignment(self) -> int:
+        """Calculate the alignment of this annotated type based on the format string."""
+        return _get_struct_alignment([calcsize(s) for s in self.fmt if not s.isdigit()])
 
     def __get_pydantic_core_schema__(
         self,
@@ -124,9 +130,9 @@ class CFmt[T]:
             if value is _USE_BUFFER:
                 ctx = _get_context(info, required=True)
                 io = ctx["io"]
-                align = ctx["align"]
+                alignment = ctx["alignment"]
                 value = unpack_from(fmt, io.getbuffer(), io.tell())
-                io.seek(size + (align - (size % align)) % align, 1)
+                io.seek(size + (alignment - (size % alignment)) % alignment, 1)
                 return validate(value)
             else:
                 return value
@@ -134,17 +140,22 @@ class CFmt[T]:
         def serializer(value: Any, info: SerializationInfo) -> Any:
             if ctx := _get_context(info):
                 io = ctx["io"]
-                align = ctx["align"]
+                alignment = ctx["alignment"]
                 io.write(pack(fmt, *dump(value)))
-                io.write(b"\x00" * ((align - (size % align)) % align))
-            else:
-                return value
+                io.write(b"\x00" * ((alignment - (size % alignment)) % alignment))
+            return value
+
+        schema = handler(source)
 
         return cs.with_info_before_validator_function(
             validator,
-            schema=handler(source),
+            schema=schema,
             metadata={_METADATA_KEY: self},
-            serialization=cs.plain_serializer_function_ser_schema(serializer, info_arg=True),
+            serialization=cs.plain_serializer_function_ser_schema(
+                serializer,
+                info_arg=True,
+                return_schema=schema,
+            ),
         )
 
 
@@ -156,21 +167,23 @@ type _Recurse = Callable[[cs.CoreSchema, _Recurse], cs.CoreSchema]
 
 class _ModelSchemaAdapter:
     _VISIT_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "tuple",
-        "model",
         "definition-ref",
+        "function-before",
+        "function-wrap",
         "model-fields",
+        "model",
+        "tuple",
     }
     _ALLOWED_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "function-before",
         "default",
+        "any",
     }
 
     def __init__(self, handler: GetCoreSchemaHandler) -> None:
         self.handler = handler
         self.format: list[str] = []
         self.in_ref = False
-        self.field_alignments: list[int] = []
+        self.member_alignments: list[int] = []
         self.visitors: dict[str, _Recurse] = {}
         for schema_type in self._VISIT_TYPES:
             method_name = f"visit_{schema_type.replace('-', '_')}"
@@ -180,7 +193,8 @@ class _ModelSchemaAdapter:
         return walk_core_schema(schema, self.visit)
 
     def visit(self, schema: cs.CoreSchema, recurse: _Recurse) -> cs.CoreSchema:
-        if _get_metadata(schema):
+        if cfmt := _get_cfmt(schema):
+            self.member_alignments.append(cfmt.alignment)
             return schema
         schema_type = schema["type"]
         visit_fn = self.visitors.get(schema_type)
@@ -223,11 +237,7 @@ class _ModelSchemaAdapter:
 
     def visit_model_fields(self, schema: cs.ModelFieldsSchema, recurse: _Recurse) -> cs.CoreSchema:
         for field in schema["fields"].values():
-            self.field_alignments.append(0)
-            try:
-                field["schema"] = recurse(field["schema"], self.visit)
-            finally:
-                self.field_alignments.pop()
+            field["schema"] = self.visit(field["schema"], recurse)
         return schema
 
     def visit_definition_ref(
@@ -244,10 +254,44 @@ class _ModelSchemaAdapter:
         # Return the ref - no need to duplicated it
         return schema
 
+    def visit_function_before(
+        self, schema: cs.BeforeValidatorFunctionSchema, recurse: _Recurse
+    ) -> cs.CoreSchema:
+        return self.visit(schema["schema"], recurse)
+
+    def visit_function_wrap(
+        self, schema: cs.WrapValidatorFunctionSchema, recurse: _Recurse
+    ) -> cs.CoreSchema:
+        return self.visit(schema["schema"], recurse)
+
+
+def _get_struct_alignment(member_alignments: list[int]) -> int:
+    """Calculate the alignment of a struct based on the alignments of its members.
+
+    From: https://stackoverflow.com/questions/14510711/how-is-the-size-of-a-c-class-determined/14510919#14510919
+
+    * Each member in the structure has some size s and some alignment requirement a.
+    * The compiler starts with a size S set to zero and an alignment requirement
+      A set to one (byte).
+    * The compiler processes each member in the structure in order:
+        1. Consider the member's alignment requirement a. If S is not currently a multiple of
+           a, then add just enough bytes to S so that it is a multiple of a. This determines where
+           the member will go; it will go at offset S from the beginning of the structure (for the
+           current value of S).
+        2. Set A to the least common multiple1 of A and a.
+        3. Add s to S, to set aside space for the member.
+    * When the above process is done for each member, consider the structure's alignment
+      requirement A. If S is not currently a multiple of A, then add just enough to S so that
+      it is a multiple of A.
+
+    This can be simplified to just taking the maximum alignment of the members.
+    """
+    return max(member_alignments, default=1)
+
 
 class _Context(TypedDict):
     io: BytesIO
-    align: int
+    alignment: int
 
 
 @overload
@@ -272,8 +316,8 @@ def _get_context(
     return ctx
 
 
-def _get_metadata(schema: cs.CoreSchema) -> CFmt:
-    return schema.get("metadata", {}).get(_METADATA_KEY, {})
+def _get_cfmt(schema: cs.CoreSchema) -> CFmt | None:
+    return schema.get("metadata", {}).get(_METADATA_KEY)
 
 
 _CONTEXT_KEY = "cmodel"
