@@ -27,6 +27,12 @@ class MixedModel(CModel):
     value: Float
 
 
+class PackedMixedModel(CModel, c_alignment=1):
+    count: Int
+    flag: Bool
+    value: Float
+
+
 class TupleModel(CModel):
     coords: An[tuple[int, int, int], c_int(3)]
 
@@ -81,6 +87,34 @@ def test_mixed_model_pack():
     buf = BytesIO()
     model.c_pack(buf)
     assert buf.getvalue() == struct.pack("i?f", 5, True, 1.5)
+
+
+def test_packed_model_unpack_reads_packed_bytes():
+    packed_data = struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5)
+    result = PackedMixedModel.c_unpack(BytesIO(packed_data))
+    assert result.count == 5
+    assert result.flag is True
+    assert result.value == pytest.approx(1.5)
+
+
+def test_packed_model_pack_uses_c_alignment_1():
+    model = PackedMixedModel(count=5, flag=True, value=1.5)
+    buf = BytesIO()
+    model.c_pack(buf)
+
+    aligned_data = struct.pack("i?f", 5, True, 1.5)
+    packed_data = struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5)
+
+    assert buf.getvalue() == packed_data
+    assert buf.getvalue() != aligned_data
+
+
+def test_packed_model_roundtrip():
+    original = PackedMixedModel(count=5, flag=True, value=1.5)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert PackedMixedModel.c_unpack(buf) == original
 
 
 def test_nested_unpack():
