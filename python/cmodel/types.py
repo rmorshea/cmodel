@@ -10,7 +10,7 @@ def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFmt[T]]:
     return lambda count: (
         CFmt[T](fmt, operator.itemgetter(0), lambda x: (x,))
         if count == 1
-        else CFmt[T](fmt=f"{count}{fmt}")  # pyright: ignore[reportArgumentType]
+        else CFmt[T](format=f"{count}{fmt}")  # pyright: ignore[reportArgumentType]
     )
 
 
@@ -82,7 +82,7 @@ ComplexDouble = An[complex, c_complex_double(1)]
 
 def c_uuid() -> CFmt[UUID]:
     """CFormat for a UUID, represented as a 16-byte array."""
-    return CFmt(fmt="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
+    return CFmt(format="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
 
 
 Uuid = An[UUID, c_uuid()]
@@ -91,4 +91,4 @@ Uuid = An[UUID, c_uuid()]
 
 def c_char(count: int) -> CFmt:
     """CFormat for a char array of the given count."""
-    return CFmt(fmt=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))
+    return CFmt(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))
