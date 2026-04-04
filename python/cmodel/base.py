@@ -1,3 +1,5 @@
+"""Public base classes for defining C-compatible Pydantic models."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
@@ -21,7 +23,11 @@ from cmodel.schema import unpack_c_schema
 
 
 class CModel(BaseModel):
-    """Base class for models that can be packed/unpacked to/from C binary data."""
+    """Base class for models that can be packed to and unpacked from C-compatible bytes.
+
+    Subclasses behave like normal Pydantic models, but also carry a derived binary
+    schema that `c_pack()` and `c_unpack()` use to read and write struct data.
+    """
 
     c_schema: ClassVar[CStructSchema]
     c_alignment: ClassVar[int | None] = None
@@ -54,19 +60,24 @@ class CModel(BaseModel):
 
     @classmethod
     def c_unpack(cls, buffer: BytesIO) -> Self:
-        """Read a C binary data buffer as a packed struct and return an instance of the model."""
+        """Read one model instance from the current position of a binary buffer."""
         value = unpack_c_schema(buffer, cls.c_schema)
         return cls.model_validate(value)
 
     def c_pack(self, buffer: BytesIO) -> None:
-        """Write the model instance to a C binary data buffer as a packed struct."""
+        """Write this model instance to the current position of a binary buffer."""
         value = self.model_dump()
         pack_c_schema(buffer, self.c_schema, value)
 
 
 @dataclass
 class CFmt[T]:
-    """Metadata for a C field, used in the Annotated type of each field in a CModel."""
+    """Binary format metadata for a field declared with `typing.Annotated`.
+
+    `format` is a `struct`-style format string for the field itself. Optional
+    `validate` and `dump` callables adapt between the raw tuple produced by `struct`
+    operations and the Python value stored on the model.
+    """
 
     format: str
     validate: Callable[[tuple[Any, ...]], T] = lambda x: x  # pyright: ignore[reportAssignmentType]

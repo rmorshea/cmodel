@@ -1,3 +1,5 @@
+"""Public field aliases and helpers for common C-compatible scalar formats."""
+
 import operator
 from collections.abc import Callable
 from typing import Annotated as An

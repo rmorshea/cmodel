@@ -95,12 +95,10 @@ fi
 if [[ "$NO_MD_STYLE" != "true" ]]; then
   if [[ "$CHECK" == "true" ]]; then
     uv run mdformat --ignore-missing-references --check README.md docs
-    uv run doccmd -v --language=python --no-pad-file --command "ruff format --check" docs
-    uv run doccmd -v --language=python --no-pad-file --command "ruff check" docs
+    uv run ruff format --preview --check docs
   else
     uv run mdformat --ignore-missing-references README.md docs
-    uv run doccmd -v --language=python --no-pad-file --command "ruff format" docs
-    uv run doccmd -v --language=python --no-pad-file --command "ruff check --fix" docs
+    uv run ruff format --preview docs
   fi
 fi
 
