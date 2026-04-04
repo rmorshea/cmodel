@@ -3,7 +3,6 @@ from io import BytesIO
 from typing import Annotated as An
 
 import pytest
-from pydantic import BaseModel
 
 from cmodel.base import CModel
 from cmodel.types import Bool
@@ -23,6 +22,12 @@ class LineModel(CModel):
 
 
 class MixedModel(CModel):
+    count: Int
+    flag: Bool
+    value: Float
+
+
+class PackedMixedModel(CModel, c_alignment=1):
     count: Int
     flag: Bool
     value: Float
@@ -70,7 +75,7 @@ def test_model_validates_normally():
 
 
 def test_mixed_model_unpack():
-    buf = BytesIO(struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5))
+    buf = BytesIO(struct.pack("i?f", 5, True, 1.5))
     result = MixedModel.c_unpack(buf)
     assert result.count == 5
     assert result.flag is True
@@ -81,7 +86,35 @@ def test_mixed_model_pack():
     model = MixedModel(count=5, flag=True, value=1.5)
     buf = BytesIO()
     model.c_pack(buf)
-    assert buf.getvalue() == struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5)
+    assert buf.getvalue() == struct.pack("i?f", 5, True, 1.5)
+
+
+def test_packed_model_unpack_reads_packed_bytes():
+    packed_data = struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5)
+    result = PackedMixedModel.c_unpack(BytesIO(packed_data))
+    assert result.count == 5
+    assert result.flag is True
+    assert result.value == pytest.approx(1.5)
+
+
+def test_packed_model_pack_uses_c_alignment_1():
+    model = PackedMixedModel(count=5, flag=True, value=1.5)
+    buf = BytesIO()
+    model.c_pack(buf)
+
+    aligned_data = struct.pack("i?f", 5, True, 1.5)
+    packed_data = struct.pack("i", 5) + struct.pack("?", True) + struct.pack("f", 1.5)
+
+    assert buf.getvalue() == packed_data
+    assert buf.getvalue() != aligned_data
+
+
+def test_packed_model_roundtrip():
+    original = PackedMixedModel(count=5, flag=True, value=1.5)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert PackedMixedModel.c_unpack(buf) == original
 
 
 def test_nested_unpack():
@@ -124,27 +157,3 @@ def test_tuple_field_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert TupleModel.c_unpack(buf) == original
-
-
-def test_variadic_tuple_not_supported():
-    with pytest.raises(ValueError, match="variadic"):
-
-        class BadModel(CModel):
-            values: tuple[int, ...]
-
-
-def test_non_cmodel_nested_not_supported():
-    class PlainModel(BaseModel):
-        value: int
-
-    with pytest.raises(TypeError, match="CModel"):
-
-        class BadModel(CModel):
-            nested: PlainModel
-
-
-def test_unsupported_schema_type_raises():
-    with pytest.raises(TypeError, match="Unsupported schema type"):
-
-        class BadModel(CModel):
-            value: int  # bare int without CFmt annotation

@@ -2,26 +2,35 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from struct import calcsize
-from struct import pack
-from struct import unpack_from
 from typing import Any
 from typing import ClassVar
-from typing import Literal
 from typing import Self
-from typing import TypedDict
-from typing import overload
+from typing import Unpack
 
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import GetCoreSchemaHandler
-from pydantic import SerializationInfo
-from pydantic import ValidationInfo
-from pydantic import model_validator
 from pydantic_core import core_schema as cs
-from pydantic_walk_core_schema import walk_core_schema
+
+from cmodel import _utils
+from cmodel.schema import CFormatSchema
+from cmodel.schema import CStructSchema
+from cmodel.schema import c_schema_from_pydantic_core_schema
+from cmodel.schema import pack_c_schema
+from cmodel.schema import unpack_c_schema
 
 
 class CModel(BaseModel):
     """Base class for models that can be packed/unpacked to/from C binary data."""
+
+    c_schema: ClassVar[CStructSchema]
+    c_alignment: ClassVar[int | None] = None
+
+    def __init_subclass__(
+        cls, *, c_alignment: int | None = None, **kwargs: Unpack[ConfigDict]
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.c_alignment = c_alignment
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -35,190 +44,55 @@ class CModel(BaseModel):
             # we're defining the schema for this class - just return it
             return handler(source)
         else:
-            # we're defining the schema for a subclass
-            adapter = _ModelSchemaAdapter(handler)
-            return adapter.adapt(handler(source))
+            py_schema = handler(source)
+            c_schema = c_schema_from_pydantic_core_schema(py_schema, handler)
+            if c_schema["type"] != "struct":
+                msg = "CModel fields must be structs"
+                raise TypeError(msg)
+            cls.c_schema = c_schema
+            return py_schema
 
     @classmethod
     def c_unpack(cls, buffer: BytesIO) -> Self:
         """Read a C binary data buffer as a packed struct and return an instance of the model."""
-        ctx: _Context = {"io": buffer}
-        return cls.model_validate(_USE_BUFFER, context={_CONTEXT_KEY: ctx})
+        value = unpack_c_schema(buffer, cls.c_schema)
+        return cls.model_validate(value)
 
     def c_pack(self, buffer: BytesIO) -> None:
         """Write the model instance to a C binary data buffer as a packed struct."""
-        ctx: _Context = {"io": buffer}
-        self.model_dump(context={_CONTEXT_KEY: ctx})
-
-    @model_validator(mode="before")
-    @classmethod
-    def _validate_model(cls, value: Any) -> Any:
-        if value is _USE_BUFFER:
-            # Indicate that we're unpacking by ensuring each field is present and gets "validated".
-            # The validator for each field will then read from the buffer.
-            return dict.fromkeys(cls.model_fields, _USE_BUFFER)
-        else:
-            return value
+        value = self.model_dump()
+        pack_c_schema(buffer, self.c_schema, value)
 
 
 @dataclass
 class CFmt[T]:
     """Metadata for a C field, used in the Annotated type of each field in a CModel."""
 
-    fmt: str
+    format: str
     validate: Callable[[tuple[Any, ...]], T] = lambda x: x  # pyright: ignore[reportAssignmentType]
     dump: Callable[[T], tuple[Any, ...]] = lambda x: x  # pyright: ignore[reportAssignmentType]
+
+    def __post_init__(self) -> None:
+        if self.format.startswith(("@", "=", "<", ">", "!")):
+            msg = "Format string should not include byte order or alignment characters"
+            raise ValueError(msg)
 
     def __get_pydantic_core_schema__(
         self,
         source: Any,
         handler: GetCoreSchemaHandler,
     ) -> cs.CoreSchema:
-        fmt = self.fmt
-        size = calcsize(fmt)
-        validate = self.validate
-        dump = self.dump
-
-        def validator(value: Any, info: ValidationInfo) -> Any:
-            if value is _USE_BUFFER:
-                ctx = _get_context(info, required=True)
-                io = ctx["io"]
-                value = unpack_from(fmt, io.getbuffer(), io.tell())
-                io.seek(size, 1)
-                return validate(value)
-            else:
-                return value
-
-        def serializer(value: Any, info: SerializationInfo) -> Any:
-            if ctx := _get_context(info):
-                ctx["io"].write(pack(fmt, *dump(value)))
-            else:
-                return value
-
-        return cs.with_info_before_validator_function(
-            validator,
-            schema=handler(source),
-            metadata={_METADATA_KEY: self},
-            serialization=cs.plain_serializer_function_ser_schema(serializer, info_arg=True),
+        schema = handler(source)
+        schema.setdefault("metadata", {})[_utils.PYDANTIC_SCHEMA_METADATA_KEY] = (
+            _utils.PydanticSchemaMetadata(
+                format_schema=CFormatSchema(
+                    type="format",
+                    format=self.format,
+                    alignment=_utils.calc_format_alignment(self.format),
+                    validate=self.validate,
+                    dump=self.dump,
+                    size=calcsize(self.format),
+                )
+            )
         )
-
-
-_USE_BUFFER = object()
-
-
-type _Recurse = Callable[[cs.CoreSchema, _Recurse], cs.CoreSchema]
-
-
-class _ModelSchemaAdapter:
-    _VISIT_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "tuple",
-        "model",
-        "definition-ref",
-    }
-    _ALLOWED_TYPES: ClassVar[set[cs.CoreSchemaType]] = {
-        "model-fields",
-        "function-before",
-        "default",
-    }
-
-    def __init__(self, handler: GetCoreSchemaHandler) -> None:
-        self.handler = handler
-        self.format: list[str] = []
-        self.in_ref = False
-        self.visitors: dict[str, _Recurse] = {}
-        for schema_type in self._VISIT_TYPES:
-            method_name = f"visit_{schema_type.replace('-', '_')}"
-            self.visitors[schema_type] = getattr(self, method_name)
-
-    def adapt(self, schema: cs.CoreSchema) -> cs.CoreSchema:
-        return walk_core_schema(schema, self.visit)
-
-    def visit(self, schema: cs.CoreSchema, recurse: _Recurse) -> cs.CoreSchema:
-        if _get_metadata(schema):
-            return schema
-        schema_type = schema["type"]
-        visit_fn = self.visitors.get(schema_type)
-        if visit_fn is not None:
-            return visit_fn(schema, recurse)
-        elif schema_type in self._ALLOWED_TYPES:
-            return recurse(schema, self.visit)
-        else:
-            msg = f"Unsupported schema type {schema['type']!r} in CModel"
-            raise TypeError(msg)
-
-    def visit_tuple(self, schema: cs.TupleSchema, recurse: _Recurse) -> cs.CoreSchema:
-        if schema.get("variadic_item_index") is not None:
-            msg = "CModel does not support variadic tuples"
-            raise ValueError(msg)
-
-        size = len(schema["items_schema"])
-        use_buffer = (_USE_BUFFER,) * size
-
-        def before_validator(value: Any) -> Any:
-            if value is _USE_BUFFER:
-                return use_buffer
-            else:
-                return value
-
-        return cs.no_info_before_validator_function(
-            before_validator,
-            schema=recurse(schema, self.visit),
-        )
-
-    def visit_model(self, schema: cs.ModelSchema, recurse: _Recurse) -> cs.CoreSchema:
-        if not issubclass(schema["cls"], CModel):
-            msg = f"All models used in a CModel must inherit from CModel, got {schema['cls']!r}"
-            raise TypeError(msg)
-
-        if self.in_ref:
-            return schema
-        else:
-            return recurse(schema, self.visit)
-
-    def visit_definition_ref(
-        self, schema: cs.DefinitionReferenceSchema, recurse: _Recurse
-    ) -> cs.CoreSchema:
-        resolved_schema = self.handler.resolve_ref_schema(schema)
-
-        self.in_ref = True
-        try:
-            recurse(resolved_schema, self.visit)
-        finally:
-            self.in_ref = False
-
-        # Return the ref - no need to duplicated it
         return schema
-
-
-class _Context(TypedDict):
-    io: BytesIO
-
-
-@overload
-def _get_context(
-    info: ValidationInfo | SerializationInfo, *, required: Literal[True]
-) -> _Context: ...
-
-
-@overload
-def _get_context(
-    info: ValidationInfo | SerializationInfo, *, required: bool = ...
-) -> _Context | None: ...
-
-
-def _get_context(
-    info: ValidationInfo | SerializationInfo, *, required: bool = False
-) -> _Context | None:
-    ctx = info.context.get(_CONTEXT_KEY) if isinstance(info.context, dict) else None
-    if ctx is None and required:
-        msg = "Context is required for CModel packing/unpacking"
-        raise ValueError(msg)
-    return ctx
-
-
-def _get_metadata(schema: cs.CoreSchema) -> CFmt:
-    return schema.get("metadata", {}).get(_METADATA_KEY, {})
-
-
-_CONTEXT_KEY = "cmodel"
-_METADATA_KEY = "cmodel"
