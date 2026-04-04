@@ -55,20 +55,6 @@ CSchema = CStructSchema | CFormatSchema
 """Any C schema"""
 
 
-class PydanticSchemaMetadata(TypedDict, total=False):
-    """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
-
-    format_schema: CFormatSchema[Any]
-
-
-def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata:
-    """Get the CModel metadata from a Pydantic core schema, if it exists."""
-    return schema.get("metadata", {}).get(PYDANTIC_SCHEMA_METADATA_KEY, {})
-
-
-PYDANTIC_SCHEMA_METADATA_KEY = "cmodel"
-
-
 def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
     """Unpack a C struct from a buffer according to the provided schema."""
     return _unpack(io, schema, 1)
@@ -149,7 +135,7 @@ def _visit(
     py_schema: cs.CoreSchema, handler: GetCoreSchemaHandler, context: _VisitorContext
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
-    metadata = get_pydantic_schema_metadata(py_schema)
+    metadata = _utils.get_pydantic_schema_metadata(py_schema)
     if format_schema := metadata.get("format_schema"):
         context["parent_field_schema"]["schema"] = format_schema
         return
@@ -254,6 +240,8 @@ def _visit(
             )
             context["parent_field_schema"]["schema"] = c_schema
         case "definition-ref":
+            # TODO: use a similar ref schema mechanism that Pydantic does - if we've seen the
+            # reference ID we should be able to reuse the same CSchema object.
             py_schema = handler.resolve_ref_schema(py_schema)
             _visit(py_schema, handler, context)
         # pass on allowed schema types

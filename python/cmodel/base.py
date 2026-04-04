@@ -13,10 +13,8 @@ from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
-from cmodel.schema import PYDANTIC_SCHEMA_METADATA_KEY
 from cmodel.schema import CFormatSchema
 from cmodel.schema import CStructSchema
-from cmodel.schema import PydanticSchemaMetadata
 from cmodel.schema import c_schema_from_pydantic_core_schema
 from cmodel.schema import pack_c_schema
 from cmodel.schema import unpack_c_schema
@@ -85,14 +83,16 @@ class CFmt[T]:
         handler: GetCoreSchemaHandler,
     ) -> cs.CoreSchema:
         schema = handler(source)
-        schema.setdefault("metadata", {})[PYDANTIC_SCHEMA_METADATA_KEY] = PydanticSchemaMetadata(
-            format_schema=CFormatSchema(
-                type="format",
-                format=self.format,
-                alignment=_utils.calc_format_alignment(self.format),
-                validate=self.validate,
-                dump=self.dump,
-                size=calcsize(self.format),
+        schema.setdefault("metadata", {})[_utils.PYDANTIC_SCHEMA_METADATA_KEY] = (
+            _utils.PydanticSchemaMetadata(
+                format_schema=CFormatSchema(
+                    type="format",
+                    format=self.format,
+                    alignment=_utils.calc_format_alignment(self.format),
+                    validate=self.validate,
+                    dump=self.dump,
+                    size=calcsize(self.format),
+                )
             )
         )
         return schema
