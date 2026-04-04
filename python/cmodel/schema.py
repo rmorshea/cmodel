@@ -172,6 +172,15 @@ def _visit(
                 c_schema["alignment"] = _utils.calc_struct_alignment(
                     c_schema["field_schemas"].values()
                 )
+
+            for f_index, f_schema in enumerate(c_schema["field_schemas"].values()):
+                if f_schema["variable_length"]:
+                    if f_index != len(c_schema["field_schemas"]) - 1:
+                        msg = "Variable length fields must be the last field in a struct"
+                        raise ValueError(msg)
+                    parent_field_schema["variable_length"] = True
+                    break
+
         case "model-fields":
             parent_schema = context["parent_field_schema"]["schema"]
 
