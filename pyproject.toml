@@ -17,7 +17,6 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.12.5",
-    "pydantic-walk-core-schema>=1.0.0",
 ]
 [project.urls]
 Source = "https://github.com/rmorshea/cmodel"
