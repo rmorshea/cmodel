@@ -149,6 +149,10 @@ def _visit(
     py_schema: cs.CoreSchema, handler: GetCoreSchemaHandler, context: _VisitorContext
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
+    metadata = get_pydantic_schema_metadata(py_schema)
+    if format_schema := metadata.get("format_schema"):
+        context["parent_field_schema"]["schema"] = format_schema
+        return
     match py_schema["type"]:
         case "model":
             c_schema = CStructSchema(
@@ -227,29 +231,26 @@ def _visit(
 
             c_schema["alignment"] = _utils.calc_struct_alignment(c_schema["field_schemas"].values())
         case "int":
-            c_schema = _maybe_default_format_schema(py_schema, "i")
+            c_schema = _simple_format_schema("i")
             context["parent_field_schema"]["schema"] = c_schema
         case "float":
-            c_schema = _maybe_default_format_schema(py_schema, "f")
+            c_schema = _simple_format_schema("f")
             context["parent_field_schema"]["schema"] = c_schema
         case "bool":
-            c_schema = _maybe_default_format_schema(py_schema, "?")
+            c_schema = _simple_format_schema("?")
             context["parent_field_schema"]["schema"] = c_schema
         case "bytes":
-            c_schema = _maybe_default_format_schema(py_schema, "s")
+            c_schema = _simple_format_schema("s")
             context["parent_field_schema"]["schema"] = c_schema
         case "uuid":
             # Pydantic will cast this to a UUID object during validation.
-            c_schema = _maybe_default_format_schema(
-                py_schema,
-                CFormatSchema(
-                    type="format",
-                    format="16s",
-                    alignment=_utils.calc_format_alignment("s"),
-                    validate=lambda x: UUID(bytes=x[0]),
-                    dump=lambda x: (x.bytes,),
-                    size=calcsize("16s"),
-                ),
+            c_schema = CFormatSchema(
+                type="format",
+                format="16s",
+                alignment=_utils.calc_format_alignment("s"),
+                validate=lambda x: UUID(bytes=x[0]),
+                dump=lambda x: (x.bytes,),
+                size=calcsize("16s"),
             )
             context["parent_field_schema"]["schema"] = c_schema
         case "definition-ref":
@@ -257,38 +258,17 @@ def _visit(
             _visit(py_schema, handler, context)
         # pass on allowed schema types
         case _:
-            metadata = get_pydantic_schema_metadata(py_schema)
-            if format_schema := metadata.get("format_schema"):
-                context["parent_field_schema"]["schema"] = format_schema
-            elif format_string := metadata.get("format_string"):
-                c_schema = CFormatSchema(
-                    type="format",
-                    format=format_string,
-                    alignment=_utils.calc_format_alignment(format_string),
-                    validate=_utils.identity,
-                    dump=_utils.identity,
-                    size=calcsize(format_string),
-                )
-            else:
-                msg = f"Unsupported schema type: {py_schema['type']}"
-                raise TypeError(msg)
+            msg = f"Unsupported schema type: {py_schema['type']}"
+            raise TypeError(msg)
 
 
-def _maybe_default_format_schema(
-    py_schema: cs.CoreSchema,
-    default: str | CFormatSchema,
-) -> CFormatSchema:
+def _simple_format_schema(fmt: str) -> CFormatSchema:
     """Return a default CFormatSchema unless one was specified manually."""
-    if (c_schema := get_pydantic_schema_metadata(py_schema).get("format_schema")) is not None:
-        return c_schema
-    if isinstance(default, str):
-        return CFormatSchema(
-            type="format",
-            format=default,
-            alignment=_utils.calc_format_alignment(default),
-            validate=operator.itemgetter(0),
-            dump=lambda x: (x,),
-            size=calcsize(default),
-        )
-    else:
-        return default
+    return CFormatSchema(
+        type="format",
+        format=fmt,
+        alignment=_utils.calc_format_alignment(fmt),
+        validate=operator.itemgetter(0),
+        dump=lambda x: (x,),
+        size=calcsize(fmt),
+    )
