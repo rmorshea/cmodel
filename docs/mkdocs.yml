@@ -12,9 +12,7 @@ nav:
       - Define custom field formats: guides/define-custom-field-formats.md
   - Explanation:
       - How CModel maps Python models to C layouts: explanation/how-cmodel-maps-python-models-to-c-layouts.md
-  - Reference:
-      - Overview: reference/index.md
-      - API: reference/
+  - Reference: reference/
   - Changelog: changelog.md
   - Contributing: contributing.md
 not_in_nav: |
@@ -23,7 +21,7 @@ theme:
   name: material
   icon:
     repo: fontawesome/brands/git-alt
-    logo: material/image
+    logo: material/puzzle
   features: [content.code.copy, toc.integrate, content.code.annotate, navigation.tabs]
   palette:
     # Palette toggle for automatic mode
