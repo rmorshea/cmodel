@@ -104,4 +104,4 @@ class PackedReading(CModel, c_alignment=1):
 - If you need exact byte layout, read [Control alignment and layout](guides/control-alignment-and-layout.md).
 - If the built-in field aliases are not enough, use [Define custom field formats](guides/define-custom-field-formats.md).
 - If you want the design rationale, read [How CModel maps Python models to C layouts](explanation/how-cmodel-maps-python-models-to-c-layouts.md).
-- If you already know what you need, jump to the [API reference](reference/index.md).
+- If you already know what you need, jump to the [API reference](reference/SUMMARY.md).
