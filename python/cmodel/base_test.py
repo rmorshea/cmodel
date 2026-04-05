@@ -1,8 +1,11 @@
 import struct
+from ctypes import c_short
 from io import BytesIO
 from typing import Annotated as An
+from typing import Literal
 
 import pytest
+from pydantic import Discriminator
 
 from cmodel.base import CModel
 from cmodel.types import Bool
@@ -157,3 +160,106 @@ def test_tuple_field_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert TupleModel.c_unpack(buf) == original
+
+
+class _Cat(CModel):
+    pet_type: An[Literal[1], c_int(1)]
+    meows: Int
+
+
+class _Dog(CModel):
+    pet_type: An[Literal[2], c_int(1)]
+    barks: Int
+
+
+class _Lizard(CModel):
+    pet_type: An[Literal[3, 4], c_int(1)]
+    scales: Int
+
+
+class _PetEnvelope(CModel):
+    pet: An[_Cat | _Dog | _Lizard, Discriminator("pet_type")]
+    n: Int
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_pet"),
+    [
+        (struct.pack("iii", 1, 7, 99), _Cat(pet_type=1, meows=7)),
+        (struct.pack("iii", 2, 11, 42), _Dog(pet_type=2, barks=11)),
+        (struct.pack("iii", 3, 1, 5), _Lizard(pet_type=3, scales=1)),
+        (struct.pack("iii", 4, 0, 8), _Lizard(pet_type=4, scales=0)),
+    ],
+)
+def test_tagged_union_unpack_uses_discriminator(payload, expected_pet):
+    result = _PetEnvelope.c_unpack(BytesIO(payload))
+    assert result.pet == expected_pet
+
+
+@pytest.mark.parametrize(
+    ("pet", "n", "expected"),
+    [
+        (_Cat(pet_type=1, meows=7), 99, struct.pack("iii", 1, 7, 99)),
+        (_Dog(pet_type=2, barks=11), 42, struct.pack("iii", 2, 11, 42)),
+        (_Lizard(pet_type=4, scales=0), 8, struct.pack("iii", 4, 0, 8)),
+    ],
+)
+def test_tagged_union_pack_writes_active_variant(pet, n, expected):
+    buf = BytesIO()
+    _PetEnvelope(pet=pet, n=n).c_pack(buf)
+    assert buf.getvalue() == expected
+
+
+@pytest.mark.parametrize(
+    ("pet", "n"),
+    [
+        (_Cat(pet_type=1, meows=7), 99),
+        (_Dog(pet_type=2, barks=11), 42),
+        (_Lizard(pet_type=3, scales=1), 5),
+        (_Lizard(pet_type=4, scales=0), 8),
+    ],
+)
+def test_tagged_union_roundtrip(pet, n):
+    original = _PetEnvelope(pet=pet, n=n)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _PetEnvelope.c_unpack(buf) == original
+
+
+def test_tagged_union_unpack_rejects_unknown_tag():
+    with pytest.raises(ValueError, match="Invalid tag value 9"):
+        _PetEnvelope.c_unpack(BytesIO(struct.pack("iii", 9, 1, 2)))
+
+
+def test_tagged_union_requires_explicit_c_format_on_literal():
+    class _BadCat(CModel):
+        pet_type: Literal[1]
+        meows: Int
+
+    class _BadDog(CModel):
+        pet_type: Literal[2]
+        barks: Int
+
+    with pytest.raises(TypeError, match="Unsupported schema type: literal"):
+
+        class _BadEnvelope(CModel):
+            pet: An[_BadCat | _BadDog, Discriminator("pet_type")]
+            n: Int
+
+
+def test_tagged_union_requires_matching_tag_field_schema():
+
+    class _ShortTaggedCat(CModel):
+        pet_type: An[Literal[1], c_short(1)]
+        meows: Int
+
+    class _IntTaggedDog(CModel):
+        pet_type: An[Literal[2], c_int(1)]
+        barks: Int
+
+    with pytest.raises(ValueError, match="same tag field schema"):
+
+        class _MismatchedEnvelope(CModel):
+            pet: An[_ShortTaggedCat | _IntTaggedDog, Discriminator("pet_type")]
+            n: Int

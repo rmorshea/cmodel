@@ -67,6 +67,8 @@ class CTaggedUnionSchema(TypedDict):
 
     type: Literal["tagged-union"]
 
+    alignment: int
+    """The alignment of this union in bytes computed as the max alignment of its variants."""
     tag_field: str
     """The name of the field that serves as the tag for this union."""
     tag_schema: CFormatSchema
@@ -348,22 +350,26 @@ def _visit_tagged_union(
                     raise ValueError(msg)
                 tag_schemas.append(c_schema["field_schemas"][tag_field]["schema"])
 
-    tag_schema: CFormatSchema = None  # pyright: ignore[reportAssignmentType]
-    for i, next_t_schema in enumerate(tag_schemas, start=1):
-        t_schema = tag_schemas[i - 1]
-        if t_schema["type"] != "format":
-            msg = f"Tag field {tag_field} must be a simple format field, got {t_schema['type']}"
-            raise TypeError(msg)
-        if not _format_schemas_equal(t_schema, next_t_schema):
+    if not tag_schemas:
+        msg = f"Tagged union variants must include discriminator field {tag_field}"
+        raise ValueError(msg)
+
+    tag_schema = tag_schemas[0]
+    if tag_schema["type"] != "format":
+        msg = f"Tag field {tag_field} must be a simple format field, got {tag_schema['type']}"
+        raise TypeError(msg)
+
+    for next_t_schema in tag_schemas[1:]:
+        if not _format_schemas_equal(tag_schema, next_t_schema):
             msg = (
                 f"All variants of a tagged union must have the same tag field schema, "
-                f"got {t_schema} and {next_t_schema}"
+                f"got {tag_schema} and {next_t_schema}"
             )
             raise ValueError(msg)
-        tag_schema = t_schema
 
     context["parent_field_schema"]["schema"] = CTaggedUnionSchema(
         type="tagged-union",
+        alignment=max(c_schema["alignment"] for c_schema in c_choices.values()),
         tag_field=tag_field,
         tag_schema=tag_schema,
         variant_schemas=c_choices,
