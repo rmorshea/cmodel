@@ -1,5 +1,6 @@
 import operator
 from collections.abc import Callable
+from collections.abc import Hashable
 from collections.abc import Mapping
 from io import BytesIO
 from struct import Struct
@@ -41,7 +42,7 @@ class CFormatSchema[T](TypedDict):
     type: Literal["format"]
 
     format: CFormatByEndian
-    """A mapping of endianness to `struct.Struct` objects for this format string."""
+    """The format for this field compiled for each endian."""
     alignment: int
     """The alignment of this schema in bytes."""
     validate: Callable[[tuple[Any, ...]], T]
@@ -61,6 +62,19 @@ class CStructFieldSchema(TypedDict):
     """Whether this field consumes the rest of the buffer when unpacking."""
 
 
+class CTaggedUnionSchema(TypedDict):
+    """A schema for a tagged union in a C struct."""
+
+    type: Literal["tagged-union"]
+
+    tag_field: str
+    """The name of the field that serves as the tag for this union."""
+    tag_schema: CFormatSchema
+    """The schema for the tag field that determines which variant of the union is active."""
+    variant_schemas: dict[Any, "CSchema"]
+    """A mapping of tag values to the schemas for each variant of the union."""
+
+
 class CStructSchema(TypedDict):
     """A schema for a C struct."""
 
@@ -74,7 +88,7 @@ class CStructSchema(TypedDict):
     """Anonymous structs become tuples instead of dicts when unpacked."""
 
 
-CSchema = CStructSchema | CFormatSchema
+CSchema = CStructSchema | CFormatSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
@@ -103,6 +117,16 @@ def unpack_c_schema(io: BytesIO, schema: CSchema, endian: Endian) -> Any:
                     # add padding to align to the next field
                     io.seek((alignment - (io.tell() % alignment)) % alignment, 1)
                 return dict_values
+        case "tagged-union":
+            tag_schema = schema["tag_schema"]
+            tag_size = tag_schema["format"][endian].size
+            tag_value = unpack_c_schema(io, tag_schema, endian)
+            io.seek(io.tell() - tag_size, 0)  # rewind to the start of the tag field
+            variant_schema = schema["variant_schemas"].get(tag_value)
+            if variant_schema is None:
+                msg = f"Invalid tag value {tag_value} for tagged union"
+                raise ValueError(msg)
+            return unpack_c_schema(io, variant_schema, endian)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -127,6 +151,13 @@ def pack_c_schema(io: BytesIO, schema: CSchema, endian: Endian, value: Any) -> N
                     pack_c_schema(io, s["schema"], endian, value[f])
                     # add padding to align to the next field
                     io.write(b"\x00" * ((alignment - (io.tell() % alignment)) % alignment))
+        case "tagged-union":
+            tag_value = value[schema["tag_field"]]
+            variant_schema = schema["variant_schemas"].get(tag_value)
+            if variant_schema is None:
+                msg = f"Invalid tag value {tag_value} for tagged union"
+                raise ValueError(msg)
+            pack_c_schema(io, variant_schema, endian, value)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -170,6 +201,8 @@ def _visit(
             _visit_model_fields(py_schema, handler, context)
         case "tuple":
             _visit_tuple(py_schema, handler, context)
+        case "tagged-union":
+            _visit_tagged_union(py_schema, handler, context)
         case "int":
             c_schema = _simple_format_schema("i")
             context["parent_field_schema"]["schema"] = c_schema
@@ -236,11 +269,8 @@ def _visit_model_fields(
         raise TypeError(msg)
 
     for f_name, py_f_schema in py_schema["fields"].items():
-        c_f_schema = CStructFieldSchema(
-            type="struct-field",
-            # Will get filled in by the nested visit when we visit the field's schema
-            schema=None,  # pyright: ignore[reportArgumentType]
-            variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False),
+        c_f_schema = _placeholder_struct_field_schema(
+            variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False)
         )
         parent_schema["field_schemas"][f_name] = c_f_schema
         _visit(py_f_schema["schema"], handler, {"parent_field_schema": c_f_schema})
@@ -269,18 +299,75 @@ def _visit_tuple(
     parent_field_schema["schema"] = c_schema
 
     for i, item_schema in enumerate(py_schema["items_schema"]):
-        c_f_schema = CStructFieldSchema(
-            type="struct-field",
-            # Will get filled in by the nested visit when we visit the field's schema
-            schema=None,  # pyright: ignore[reportArgumentType]
-            variable_length=(i == variadic_item_index),
-        )
+        c_f_schema = _placeholder_struct_field_schema(variable_length=i == variadic_item_index)
         c_schema["field_schemas"][str(i)] = c_f_schema
         _visit(item_schema, handler, {"parent_field_schema": c_f_schema})
 
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
     _check_c_struct_schema(parent_field_schema, c_schema)
+
+
+def _visit_tagged_union(
+    py_schema: cs.TaggedUnionSchema,
+    handler: GetCoreSchemaHandler,
+    context: _VisitorContext,
+) -> None:
+    if not isinstance(tag_field := py_schema["discriminator"], str):
+        msg = f"Only string discriminators are supported for tagged unions, got {tag_field}"
+        raise TypeError(msg)
+
+    # A slightly hacky way to get the schema for each choice by capturing them in a fake field.
+    c_choice_fields: Mapping[Hashable, CStructFieldSchema] = {}
+    for py_choice_value, py_choice_schema in py_schema["choices"].items():
+        fake_field = _placeholder_struct_field_schema()  # captures the choice schema
+        _visit(py_choice_schema, handler, {"parent_field_schema": fake_field})
+        c_choice_fields[py_choice_value] = fake_field
+    if not c_choice_fields:
+        msg = "Tagged unions must have at least one variant"
+        raise ValueError(msg)
+
+    # The above mechanism does allow us to check whether the choices are variable length or not.
+    variable_length_values = [c["variable_length"] for c in c_choice_fields.values()]
+    if any(variable_length_values):
+        if all(variable_length_values):
+            context["parent_field_schema"]["variable_length"] = True
+        else:
+            msg = "All variants of a tagged union must be variable length if any of them are"
+            raise ValueError(msg)
+
+    # Now we can build the tagged union schema using the captured choice schemas.
+    c_choices = {k: v["schema"] for k, v in c_choice_fields.items()}
+
+    tag_schemas: list[CSchema] = []
+    for c_schema in c_choices.values():
+        match c_schema["type"]:
+            case "struct":
+                if c_schema["anonymous"]:
+                    msg = f"Tagged union variants cannot be anonymous structs, got {c_schema}"
+                    raise ValueError(msg)
+                tag_schemas.append(c_schema["field_schemas"][tag_field]["schema"])
+
+    tag_schema: CFormatSchema = None  # pyright: ignore[reportAssignmentType]
+    for i, next_t_schema in enumerate(tag_schemas, start=1):
+        t_schema = tag_schemas[i - 1]
+        if t_schema["type"] != "format":
+            msg = f"Tag field {tag_field} must be a simple format field, got {t_schema['type']}"
+            raise TypeError(msg)
+        if not _format_schemas_equal(t_schema, next_t_schema):
+            msg = (
+                f"All variants of a tagged union must have the same tag field schema, "
+                f"got {t_schema} and {next_t_schema}"
+            )
+            raise ValueError(msg)
+        tag_schema = t_schema
+
+    context["parent_field_schema"]["schema"] = CTaggedUnionSchema(
+        type="tagged-union",
+        tag_field=tag_field,
+        tag_schema=tag_schema,
+        variant_schemas=c_choices,
+    )
 
 
 def _visit_uuid(
@@ -318,4 +405,25 @@ def _simple_format_schema(fmt: str) -> CFormatSchema:
         alignment=_utils.get_format_alignment(fmt),
         validate=operator.itemgetter(0),
         dump=lambda x: (x,),
+    )
+
+
+def _placeholder_struct_field_schema(*, variable_length: bool = False) -> CStructFieldSchema:
+    """Return a placeholder CStructFieldSchema that can be used to build up a CStructSchema."""
+    return CStructFieldSchema(
+        type="struct-field",
+        # The schema needs to be filled in later by a visitor
+        schema=None,  # pyright: ignore[reportArgumentType]
+        variable_length=variable_length,
+    )
+
+
+def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
+    if right["type"] != "format":
+        return False
+    return (
+        # the formats should all be the same so just check one endian
+        left["format"]["="].format == right["format"]["="].format
+        and left["alignment"] == right["alignment"]
+        # the validate/dump functions don't matter
     )
