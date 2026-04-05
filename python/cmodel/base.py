@@ -26,11 +26,14 @@ class CModel(BaseModel):
     """Base class for models that can be packed to and unpacked from C-compatible bytes.
 
     Subclasses behave like normal Pydantic models, but also carry a derived binary
-    schema that `c_pack()` and `c_unpack()` use to read and write struct data.
+    schema that [`c_pack()`][cmodel.base.CModel.c_pack] and
+    [`c_unpack()`][cmodel.base.CModel.c_unpack] use to read and write struct data.
     """
 
     c_schema: ClassVar[CStructSchema]
+    """The C struct schema for this model, derived from the Pydantic schema of the model"""
     c_alignment: ClassVar[int | None] = None
+    """Optionally override the alignment of this struct. Native by default."""
 
     def __init_subclass__(
         cls, *, c_alignment: int | None = None, **kwargs: Unpack[ConfigDict]
@@ -76,7 +79,9 @@ class CFmt[T]:
 
     `format` is a `struct`-style format string for the field itself. Optional
     `validate` and `dump` callables adapt between the raw tuple produced by `struct`
-    operations and the Python value stored on the model.
+    operations and the Python value stored on the model. Attach it to a field with
+    `Annotated[..., CFmt(...)]`, or use helpers from [`cmodel.types`][cmodel.types]
+    for the common scalar cases.
     """
 
     format: str

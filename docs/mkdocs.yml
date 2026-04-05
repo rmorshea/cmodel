@@ -10,8 +10,8 @@ nav:
       - Model common structs: guides/model-common-structs.md
       - Control alignment and layout: guides/control-alignment-and-layout.md
       - Define custom field formats: guides/define-custom-field-formats.md
-  - Explanation:
-      - How CModel maps Python models to C layouts: explanation/how-cmodel-maps-python-models-to-c-layouts.md
+  - Details:
+      - How CModel maps Python models to C layouts: details/how-cmodel-maps-python-models-to-c-layouts.md
   - Reference: reference/
   - Changelog: changelog.md
   - Contributing: contributing.md

@@ -5,7 +5,7 @@ Model C structs with Pydantic.
 CModel is for the case where your Python program needs to read or write a binary
 layout that already exists in C. You define the layout once as a Pydantic model,
 validate data with normal Python types, then pack or unpack bytes with
-`c_pack()` and `c_unpack()`.
+[`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack].
 
 ## Simple Structs
 
@@ -49,10 +49,10 @@ assert point == Point(x=3, y=7)
 
 That is the core workflow:
 
-1. Describe the binary layout with a `CModel` subclass.
-1. Use `cmodel.types` aliases, or `Annotated[..., CFmt(...)]`, to control field formats.
-1. Call `c_pack()` to write bytes.
-1. Call `c_unpack()` to read bytes.
+1. Describe the binary layout with a [`CModel`][cmodel.base.CModel] subclass.
+1. Use [`cmodel.types`][cmodel.types] aliases, or `Annotated[..., CFmt(...)]`, to control field formats.
+1. Call [`c_pack()`][cmodel.base.CModel.c_pack] to write bytes.
+1. Call [`c_unpack()`][cmodel.base.CModel.c_unpack] to read bytes.
 
 ## Nested Structs
 
@@ -77,7 +77,7 @@ class Packet(CModel):
     reading: Reading
 ```
 
-Repeated values can be expressed with `Annotated` and a counted format:
+Repeated values can be expressed with `Annotated` and a counted format helper such as [`c_int`][cmodel.types.c_int]:
 
 ```python
 from typing import Annotated
@@ -89,7 +89,7 @@ class Triangle(CModel):
     coords: Annotated[tuple[int, int, int], c_int(3)]
 ```
 
-If you need a packed layout with no implicit alignment padding, set `c_alignment=1`:
+If you need a packed layout with no implicit alignment padding, set [`c_alignment`][cmodel.base.CModel.c_alignment] to `1`:
 
 ```python
 class PackedReading(CModel, c_alignment=1):
