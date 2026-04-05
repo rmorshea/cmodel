@@ -33,6 +33,10 @@ three integers, and pack it as three consecutive `int` values”.
 This split is why the models stay readable. Python types communicate intent. Format
 metadata communicates layout.
 
+`CFmt` is intentionally limited to one underlying data type per field format string.
+Formats such as `BBB` are fine, but mixed-type formats such as `Bh` are not. When one
+logical value needs mixed field types, represent it as a tuple or nested model instead.
+
 ## Nested models become nested structs
 
 Nested `CModel` subclasses map directly onto nested C structs. That is not just a
@@ -56,10 +60,8 @@ allowed to begin.
 ## Byte order is determined at runtime
 
 The byte order of the data being packed or unpacked by a struct is determined by an
-`endian` argument passed to `CModel.c_pack` or `CModel.c_unpack`.
-
-`endian="="` selects native byte order only. It does not change the struct alignment
-rules or make the model follow a platform C ABI automatically.
+`endian` argument passed to `CModel.c_pack` or `CModel.c_unpack`. This value does not
+affect alignment as it does in Python's `struct` module.
 
 ## CModel prefers explicitness over ABI magic
 

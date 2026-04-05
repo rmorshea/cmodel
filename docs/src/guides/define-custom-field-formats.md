@@ -60,10 +60,47 @@ the string is converted back into six unsigned bytes.
 `CFmt` format strings do not accept byte-order or alignment prefixes such as `@`, `=`,
 `<`, `>`, or `!`. CModel treats field layout and struct alignment as separate concerns.
 
+`CFmt` also only supports one data type per format string. Repeated values such as
+`BBB` or `3h` are fine, but mixed layouts such as `Bh` or `if` are rejected.
+
 That means:
 
 - use the field format to describe the field itself
 - use `c_alignment` on the model to describe struct packing behavior
+- if a logical value needs mixed field types, model it as multiple values, typically a
+    tuple or nested `CModel`
+
+This restriction exists because CModel applies byte order at the field level while
+handling struct alignment separately. A mixed-type `CFmt` would blur that boundary.
+
+## Use a tuple when one logical value mixes field types
+
+If you need a single logical field that contains mixed C types, represent it as a tuple
+or another structured Python value instead of a single `CFmt` string.
+
+```python
+from cmodel import CModel
+from cmodel.types import Bool
+from cmodel.types import Short
+
+
+class SensorFlags(CModel):
+    reading: tuple[Bool, Short]
+```
+
+If you want a reusable alias, use a tuple annotation with the existing field helpers:
+
+```python
+FlagAndCount = tuple[Bool, Short]
+
+
+class SensorFlags(CModel):
+    reading: FlagAndCount
+```
+
+For a richer Python representation, keep the mixed values in a tuple at the binary
+boundary and adapt them in your own application code, or split them into a nested model
+with named fields.
 
 ## Reuse custom formats as aliases
 
