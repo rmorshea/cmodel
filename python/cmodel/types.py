@@ -17,73 +17,73 @@ def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFmt[T]]:
 
 
 c_signed_char = _make_one_or_many(int, "b")
-"""CFormat for one or more signed chars. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more signed chars. `count>1` represents a tuple of values."""
 SignedChar = An[int, c_signed_char(1)]
 """C format for a single signed char."""
 
 c_unsigned_char = _make_one_or_many(int, "B")
-"""CFormat for one or more unsigned chars. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more unsigned chars. `count>1` represents a tuple of values."""
 UnsignedChar = An[int, c_unsigned_char(1)]
 """C format for a single unsigned char."""
 
 c_bool = _make_one_or_many(bool, "?")
-"""CFormat for one or more bools. For count=1 the value is returned as a bool."""
+"""Annotated metadata for one or more bools. `count>1` represents a tuple of values."""
 Bool = An[bool, c_bool(1)]
 """C format for a single bool."""
 
 c_short = _make_one_or_many(int, "h")
-"""CFormat for one or more shorts. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more shorts. `count>1` represents a tuple of values."""
 Short = An[int, c_short(1)]
 """C format for a single short."""
 
 c_unsigned_short = _make_one_or_many(int, "H")
-"""CFormat for one or more unsigned shorts. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more unsigned shorts. `count>1` represents a tuple of values."""
 UnsignedShort = An[int, c_unsigned_short(1)]
 """C format for a single unsigned short."""
 
 c_int = _make_one_or_many(int, "i")
-"""CFormat for one or more ints. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more ints. `count>1` represents a tuple of values."""
 Int = An[int, c_int(1)]
 """C format for a single int."""
 
 c_unsigned_int = _make_one_or_many(int, "I")
-"""CFormat for one or more unsigned ints. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more unsigned ints. `count>1` represents a tuple of values."""
 UnsignedInt = An[int, c_unsigned_int(1)]
 """C format for a single unsigned int."""
 
 c_long = _make_one_or_many(int, "l")
-"""CFormat for one or more longs. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more longs. `count>1` represents a tuple of values."""
 Long = An[int, c_long(1)]
 """C format for a single long."""
 
 c_unsigned_long = _make_one_or_many(int, "L")
-"""CFormat for one or more unsigned longs. For count=1 the value is returned as an int."""
+"""Annotated metadata for one or more unsigned longs. `count>1` represents a tuple of values."""
 UnsignedLong = An[int, c_unsigned_long(1)]
 """C format for a single unsigned long."""
 
 c_float = _make_one_or_many(float, "f")
-"""CFormat for one or more floats. For count=1 the value is returned as a float."""
+"""Annotated metadata for one or more floats. `count>1` represents a tuple of values."""
 Float = An[float, c_float(1)]
 """C format for a single float."""
 
 c_double = _make_one_or_many(float, "d")
-"""CFormat for one or more doubles. For count=1 the value is returned as a float."""
+"""Annotated metadata for one or more doubles. `count>1` represents a tuple of values."""
 Double = An[float, c_double(1)]
 """C format for a single double."""
 
 c_complex_float = _make_one_or_many(complex, "F")
-"""CFormat for one or more complex floats. For count=1 the value is returned as a complex."""
+"""Annotated metadata for one or more complex floats. `count>1` represents a tuple of values."""
 ComplexFloat = An[complex, c_complex_float(1)]
 """C format for a single complex float."""
 
 c_complex_double = _make_one_or_many(complex, "D")
-"""CFormat for one or more complex doubles. For count=1 the value is returned as a complex."""
+"""Annotated metadata for one or more complex doubles. `count>1` represents a tuple of values."""
 ComplexDouble = An[complex, c_complex_double(1)]
 """C format for a single complex double."""
 
 
 def c_uuid() -> CFmt[UUID]:
-    """CFormat for a UUID, represented as a 16-byte array."""
+    """Annotated metadata for a single UUID. Expects 16-byte char array."""
     return CFmt(format="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
 
 
@@ -92,5 +92,5 @@ Uuid = An[UUID, c_uuid()]
 
 
 def c_char(count: int) -> CFmt:
-    """CFormat for a char array of the given count."""
+    """Annotated metadata for a char array of the given length. Returns Python `bytes`."""
     return CFmt(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))

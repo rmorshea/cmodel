@@ -1,7 +1,7 @@
 # Define custom field formats
 
-Use `CFmt` when the built-in aliases in `cmodel.types` do not describe the field you
-need. `CFmt` lets you define:
+Use [`CFmt`][cmodel.base.CFmt] when the built-in aliases in [`cmodel.types`][cmodel.types] do not describe the field you
+need. [`CFmt`][cmodel.base.CFmt] lets you define:
 
 - the underlying `struct` format string
 - how unpacked values become Python objects
@@ -57,21 +57,21 @@ the string is converted back into six unsigned bytes.
 
 ## Keep format strings field-local
 
-`CFmt` format strings do not accept byte-order or alignment prefixes such as `@`, `=`,
-`<`, `>`, or `!`. CModel treats field layout and struct alignment as separate concerns.
+[`CFmt`][cmodel.base.CFmt] format strings do not accept byte-order or alignment prefixes such as `@`, `=`,
+`<`, `>`, or `!`. [`CModel`][cmodel.base.CModel] treats field layout and struct alignment as separate concerns.
 
-`CFmt` also only supports one data type per format string. Repeated values such as
+[`CFmt`][cmodel.base.CFmt] also only supports one data type per format string. Repeated values such as
 `BBB` or `3h` are fine, but mixed layouts such as `Bh` or `if` are rejected.
 
 That means:
 
 - use the field format to describe the field itself
-- use `c_alignment` on the model to describe struct packing behavior
+- use [`c_alignment`][cmodel.base.CModel.c_alignment] on the model to describe struct packing behavior
 - if a logical value needs mixed field types, model it as multiple values, typically a
-    tuple or nested `CModel`
+    tuple or nested [`CModel`][cmodel.base.CModel]
 
-This restriction exists because CModel applies byte order at the field level while
-handling struct alignment separately. A mixed-type `CFmt` would blur that boundary.
+This restriction exists because [`CModel`][cmodel.base.CModel] applies byte order at the field level while
+handling struct alignment separately. A mixed-type [`CFmt`][cmodel.base.CFmt] would blur that boundary.
 
 ## Use a tuple when one logical value mixes field types
 
@@ -120,5 +120,5 @@ This keeps the model readable and makes layout changes easier to manage.
 
 ## Prefer the built-ins when they already fit
 
-`CFmt` is the escape hatch, not the default. Reach for `cmodel.types` first, then use
+[`CFmt`][cmodel.base.CFmt] is the escape hatch, not the default. Reach for [`cmodel.types`][cmodel.types] first, then use
 custom formats only where they make the binary contract clearer.

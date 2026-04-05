@@ -1,0 +1,48 @@
+# Guides Overview
+
+Use the guides when you know the kind of binary layout you need to model and want the
+shortest path to a working definition.
+
+The guides are organized around the main layout decisions you make while describing a
+struct.
+
+## In this section
+
+### [Model common structs](model-common-structs.md)
+
+Start here for the everyday building blocks of a CModel definition. This guide covers
+scalar fields, nested models, fixed-size repeated values, and fixed-length byte
+strings, then shows how to round-trip a model through bytes to confirm the layout.
+
+Read this page first if you are still translating a C struct into Python and want a
+practical baseline before worrying about alignment details.
+
+### [Control alignment and layout](control-alignment-and-layout.md)
+
+Use this guide when field order alone is not enough and the exact byte layout matters.
+It explains how [`c_alignment`][cmodel.base.CModel.c_alignment] affects padding,
+how packed structs differ from aligned structs, and how byte order remains a separate
+decision made at pack and unpack time.
+
+Read this page when you are matching an existing binary protocol, file format, or ABI
+boundary and need confidence that the bytes land in the right positions.
+
+### [Define custom field formats](define-custom-field-formats.md)
+
+Use this guide when the built-in aliases from [`cmodel.types`][cmodel.types] do not
+fully describe a field. It shows how to define a [`CFmt`][cmodel.base.CFmt], adapt raw
+binary values into richer Python values, and keep custom formats reusable without
+blurring the boundary between field format and struct layout.
+
+Read this page when the structure is straightforward but one or two fields need a more
+specialized binary representation.
+
+## Reading path
+
+- New to CModel: read these guides in order.
+- Working from an existing C declaration: start with [Model common structs](model-common-structs.md), then jump to [Control alignment and layout](control-alignment-and-layout.md).
+- Working with unusual field encodings: go straight to [Define custom field formats](define-custom-field-formats.md).
+
+If you are new to CModel, read these guides in order. If you already have a C struct or
+wire format in hand, jump directly to the guide that matches the layout problem you are
+solving.

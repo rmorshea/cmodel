@@ -1,18 +1,18 @@
 # Control alignment and layout
 
 The fastest way to get incorrect binary data is to assume the layout has no padding.
-CModel lets you keep the default aligned behavior, or opt into packed layouts when the
+[`CModel`][cmodel.base.CModel] lets you keep the default aligned behavior, or opt into packed layouts when the
 target format requires it.
 
 Alignment and byte order are separate concerns:
 
-- `c_alignment` controls padding and field placement in the struct layout.
-- The `endian` argument to `c_pack()` and `c_unpack()` controls byte order when bytes
+- [`c_alignment`][cmodel.base.CModel.c_alignment] controls padding and field placement in the struct layout.
+- The `endian` argument to [`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack] controls byte order when bytes
     are written or read.
 
 ## Understand the default
 
-By default, CModel derives a struct alignment from the fields in the model. That means
+By default, [`CModel`][cmodel.base.CModel] derives a struct alignment from the fields in the model. That means
 some layouts will include padding bytes between fields.
 
 ```python
@@ -31,13 +31,13 @@ class Mixed(CModel):
 On a typical native layout, `value` will be aligned after `flag`, so the packed bytes
 are not simply `int` + `bool` + `float` back to back.
 
-By default, `c_pack()` and `c_unpack()` use `endian="="`, which selects native byte
+By default, [`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack] use `endian="="`, which selects native byte
 order. It affects how multi-byte fields are encoded, but it does not change where
 padding bytes appear and it does not enable native struct alignment rules.
 
 ## Use packed layout when the bytes are contiguous
 
-Set `c_alignment=1` on the model class when the target binary format is packed.
+Set [`c_alignment`][cmodel.base.CModel.c_alignment] to `1` on the model class when the target binary format is packed.
 
 ```python
 class PackedMixed(CModel, c_alignment=1):
@@ -46,7 +46,7 @@ class PackedMixed(CModel, c_alignment=1):
     value: Float
 ```
 
-Now CModel writes each field immediately after the previous one with no alignment
+Now [`CModel`][cmodel.base.CModel] writes each field immediately after the previous one with no alignment
 padding inserted.
 
 ## Compare the two layouts
@@ -72,11 +72,11 @@ be stable across machines.
 
 ## Choose byte order separately from alignment
 
-Pass `endian` to `c_pack()` and `c_unpack()` when the binary format requires a specific
+Pass `endian` to [`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack] when the binary format requires a specific
 byte order.
 
 In particular, `endian="="` only selects native byte order. Alignment still comes from
-the model's layout rules and any `c_alignment` value on the struct.
+the model's layout rules and any [`c_alignment`][cmodel.base.CModel.c_alignment] value on the struct.
 
 ```python
 buf = BytesIO()
@@ -91,7 +91,7 @@ assert decoded == PackedMixed(count=5, flag=True, value=1.5)
 
 The important distinction is:
 
-- `c_alignment=1` changes the layout by removing padding between fields.
+- [`c_alignment`][cmodel.base.CModel.c_alignment] set to `1` changes the layout by removing padding between fields.
 - `endian=">"` changes the byte order of multi-byte values but not the alignment.
 - These settings are independent, so you can have an aligned big-endian struct or a
     packed little-endian struct.
@@ -137,7 +137,7 @@ If you already have a C declaration, mirror its field order exactly and decide o
 alignment immediately. Do not treat padding as an afterthought.
 
 Then decide which byte order the protocol uses and pass that same `endian` value to both
-`c_pack()` and `c_unpack()`.
+[`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack].
 
 Use this guide when you know the bytes you need to match. If the missing piece is an
 unusual field encoding rather than padding, continue to

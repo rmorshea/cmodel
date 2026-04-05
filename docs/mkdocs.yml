@@ -7,11 +7,11 @@ repo_url: https://github.com/rmorshea/cmodel
 nav:
   - Home: index.md
   - Guides:
+      - Overview: guides/index.md
       - Model common structs: guides/model-common-structs.md
       - Control alignment and layout: guides/control-alignment-and-layout.md
       - Define custom field formats: guides/define-custom-field-formats.md
-  - Explanation:
-      - How CModel maps Python models to C layouts: explanation/how-cmodel-maps-python-models-to-c-layouts.md
+  - Details: details.md
   - Reference: reference/
   - Changelog: changelog.md
   - Contributing: contributing.md
