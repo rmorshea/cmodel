@@ -56,7 +56,10 @@ allowed to begin.
 ## Byte order is determined at runtime
 
 The byte order of the data being packed or unpacked by a struct is determined by an
-`endian` argument passed to `CModel.c_pack` or `CModel.c_unpack`
+`endian` argument passed to `CModel.c_pack` or `CModel.c_unpack`.
+
+`endian="="` selects native byte order only. It does not change the struct alignment
+rules or make the model follow a platform C ABI automatically.
 
 ## CModel prefers explicitness over ABI magic
 

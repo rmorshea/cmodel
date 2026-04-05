@@ -19,6 +19,7 @@ CORE_SCHEMA_TYPES = get_args(cs.CoreSchemaType)
 
 
 Endian = Literal[
+    # @ is excluded because it means "native" endianness but also native alignment
     "=",  # native
     "<",  # little-endian
     ">",  # big-endian
