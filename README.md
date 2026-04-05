@@ -33,20 +33,3 @@ point = Point.c_unpack(buf)
 assert point == Point(x=3, y=7)
 assert buf.getvalue() == b"\x03\x00\x00\x00\x07\x00\x00\x00"
 ```
-
-## What CModel provides
-
-- Typed field aliases for common C scalar formats such as `Int`, `Float`, and `Bool`
-- Repeated field formats such as `Annotated[tuple[int, int, int], c_int(3)]`
-- Nested structs by nesting `CModel` subclasses
-- Explicit packed layouts with `c_alignment=1`
-- Custom field encodings with `CFmt`
-
-## Documentation
-
-The documentation site includes:
-
-- A guided first example for getting started
-- Practical guides for layout control and custom formats
-- API reference for the public modules
-- Conceptual explanation of how Pydantic validation maps to binary layout

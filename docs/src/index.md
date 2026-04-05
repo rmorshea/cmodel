@@ -7,7 +7,7 @@ layout that already exists in C. You define the layout once as a Pydantic model,
 validate data with normal Python types, then pack or unpack bytes with
 `c_pack()` and `c_unpack()`.
 
-## Start with one struct
+## Simple Structs
 
 Install the package:
 
@@ -54,7 +54,7 @@ That is the core workflow:
 1. Call `c_pack()` to write bytes.
 1. Call `c_unpack()` to read bytes.
 
-## Build up from there
+## Nested Structs
 
 Nested structs look like nested models:
 
@@ -104,4 +104,4 @@ class PackedReading(CModel, c_alignment=1):
 - If you need exact byte layout, read [Control alignment and layout](guides/control-alignment-and-layout.md).
 - If the built-in field aliases are not enough, use [Define custom field formats](guides/define-custom-field-formats.md).
 - If you want the design rationale, read [How CModel maps Python models to C layouts](explanation/how-cmodel-maps-python-models-to-c-layouts.md).
-- If you already know what you need, jump to the [API reference](reference/index.md).
+- If you already know what you need, jump to the [API reference](reference/SUMMARY.md).
