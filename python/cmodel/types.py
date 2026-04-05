@@ -5,14 +5,14 @@ from collections.abc import Callable
 from typing import Annotated as An
 from uuid import UUID
 
-from cmodel.base import CFmt
+from cmodel.base import CFormat
 
 
-def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFmt[T]]:
+def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFormat[T]]:
     return lambda count: (
-        CFmt[T](fmt, operator.itemgetter(0), lambda x: (x,))
+        CFormat[T](fmt, operator.itemgetter(0), lambda x: (x,))
         if count == 1
-        else CFmt[T](format=f"{count}{fmt}")  # pyright: ignore[reportArgumentType]
+        else CFormat[T](format=f"{count}{fmt}")  # pyright: ignore[reportArgumentType]
     )
 
 
@@ -82,15 +82,15 @@ ComplexDouble = An[complex, c_complex_double(1)]
 """C format for a single complex double."""
 
 
-def c_uuid() -> CFmt[UUID]:
+def c_uuid() -> CFormat[UUID]:
     """Annotated metadata for a single UUID. Expects 16-byte char array."""
-    return CFmt(format="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
+    return CFormat(format="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
 
 
 Uuid = An[UUID, c_uuid()]
 """C format for a single UUID."""
 
 
-def c_char(count: int) -> CFmt:
+def c_char(count: int) -> CFormat:
     """Annotated metadata for a char array of the given length. Returns Python `bytes`."""
-    return CFmt(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))
+    return CFormat(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))

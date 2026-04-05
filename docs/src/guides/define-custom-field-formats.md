@@ -1,7 +1,7 @@
 # Define custom field formats
 
-Use [`CFmt`][cmodel.base.CFmt] when the built-in aliases in [`cmodel.types`][cmodel.types] do not describe the field you
-need. [`CFmt`][cmodel.base.CFmt] lets you define:
+Use [`CFormat`][cmodel.base.CFormat] when the built-in aliases in [`cmodel.types`][cmodel.types] do not describe the field you
+need. [`CFormat`][cmodel.base.CFormat] lets you define:
 
 - the underlying `struct` format string
 - how unpacked values become Python objects
@@ -15,10 +15,10 @@ format string.
 ```python
 from typing import Annotated
 
-from cmodel import CFmt
+from cmodel import CFormat
 from cmodel import CModel
 
-RGB = Annotated[tuple[int, int, int], CFmt("BBB")]
+RGB = Annotated[tuple[int, int, int], CFormat("BBB")]
 
 
 class Pixel(CModel):
@@ -35,12 +35,12 @@ binary representation.
 ```python
 from typing import Annotated
 
-from cmodel import CFmt
+from cmodel import CFormat
 from cmodel import CModel
 
 MacAddress = Annotated[
     str,
-    CFmt(
+    CFormat(
         "6B",
         validate=lambda parts: ":".join(f"{part:02x}" for part in parts),
         dump=lambda value: tuple(int(part, 16) for part in value.split(":")),
@@ -57,10 +57,10 @@ the string is converted back into six unsigned bytes.
 
 ## Keep format strings field-local
 
-[`CFmt`][cmodel.base.CFmt] format strings do not accept byte-order or alignment prefixes such as `@`, `=`,
+[`CFormat`][cmodel.base.CFormat] format strings do not accept byte-order or alignment prefixes such as `@`, `=`,
 `<`, `>`, or `!`. [`CModel`][cmodel.base.CModel] treats field layout and struct alignment as separate concerns.
 
-[`CFmt`][cmodel.base.CFmt] also only supports one data type per format string. Repeated values such as
+[`CFormat`][cmodel.base.CFormat] also only supports one data type per format string. Repeated values such as
 `BBB` or `3h` are fine, but mixed layouts such as `Bh` or `if` are rejected.
 
 That means:
@@ -71,12 +71,12 @@ That means:
     tuple or nested [`CModel`][cmodel.base.CModel]
 
 This restriction exists because [`CModel`][cmodel.base.CModel] applies byte order at the field level while
-handling struct alignment separately. A mixed-type [`CFmt`][cmodel.base.CFmt] would blur that boundary.
+handling struct alignment separately. A mixed-type [`CFormat`][cmodel.base.CFormat] would blur that boundary.
 
 ## Use a tuple when one logical value mixes field types
 
 If you need a single logical field that contains mixed C types, represent it as a tuple
-or another structured Python value instead of a single `CFmt` string.
+or another structured Python value instead of a single `CFormat` string.
 
 ```python
 from cmodel import CModel
@@ -108,7 +108,7 @@ If a custom format appears in more than one place, define it once and reuse it a
 type alias.
 
 ```python
-Temperature = Annotated[int, CFmt("h")]
+Temperature = Annotated[int, CFormat("h")]
 
 
 class Sample(CModel):
@@ -120,5 +120,5 @@ This keeps the model readable and makes layout changes easier to manage.
 
 ## Prefer the built-ins when they already fit
 
-[`CFmt`][cmodel.base.CFmt] is the escape hatch, not the default. Reach for [`cmodel.types`][cmodel.types] first, then use
+[`CFormat`][cmodel.base.CFormat] is the escape hatch, not the default. Reach for [`cmodel.types`][cmodel.types] first, then use
 custom formats only where they make the binary contract clearer.

@@ -23,7 +23,7 @@ That has two important consequences:
 
 ## Field metadata defines the wire format
 
-When you use aliases from [`cmodel.types`][cmodel.types], or an explicit [`CFmt`][cmodel.base.CFmt], you are attaching
+When you use aliases from [`cmodel.types`][cmodel.types], or an explicit [`CFormat`][cmodel.base.CFormat], you are attaching
 binary format metadata to an otherwise ordinary Python type.
 
 For example, `Int` means “validate this as an integer, but pack it with the `i` struct
@@ -33,7 +33,7 @@ three integers, and pack it as three consecutive `int` values”.
 This split is why the models stay readable. Python types communicate intent. Format
 metadata communicates layout.
 
-[`CFmt`][cmodel.base.CFmt] is intentionally limited to one underlying data type per field format string.
+[`CFormat`][cmodel.base.CFormat] is intentionally limited to one underlying data type per field format string.
 Formats such as `BBB` are fine, but mixed-type formats such as `Bh` are not. When one
 logical value needs mixed field types, represent it as a tuple or nested model instead.
 
@@ -47,7 +47,7 @@ The resulting documentation and generated reference will reflect that structure 
 
 ## Alignment is a struct-level decision
 
-[`CFmt`][cmodel.base.CFmt] describes a field. [`c_alignment`][cmodel.base.CModel.c_alignment] describes how a struct is laid out.
+[`CFormat`][cmodel.base.CFormat] describes a field. [`c_alignment`][cmodel.base.CModel.c_alignment] describes how a struct is laid out.
 
 By default, [`CModel`][cmodel.base.CModel] computes a struct alignment from the fields it contains. When you
 set [`c_alignment`][cmodel.base.CModel.c_alignment] to `1`, you are saying that this struct should be packed with no alignment
