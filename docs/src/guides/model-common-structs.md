@@ -10,7 +10,7 @@ This guide shows how to combine them without getting into internal details.
 
 ## Use the built-in field aliases
 
-The [`cmodel.types`][cmodel.types] module provides aliases for common C scalar formats.
+The `cmodel.types` module provides aliases for common C scalar formats.
 
 ```python
 from cmodel import CModel
@@ -32,7 +32,7 @@ Pydantic validation on input and model instances on output.
 
 ## Nest models to nest structs
 
-If one C struct contains another, model it with another [`CModel`][cmodel.base.CModel] subclass.
+If one C struct contains another, model it with another `CModel` subclass.
 
 ```python
 class Point(CModel):
@@ -50,7 +50,7 @@ returns nested `Point` instances.
 
 ## Represent fixed-size repeated values
 
-For repeated values, use `typing.Annotated` with one of the counted format helpers such as [`c_int`][cmodel.types.c_int] or [`c_float`][cmodel.types.c_float].
+For repeated values, use `typing.Annotated` with one of the counted format helpers.
 
 ```python
 from typing import Annotated
@@ -69,7 +69,7 @@ format helper.
 
 ## Store fixed-length byte strings
 
-Use [`c_char(count)`][cmodel.types.c_char] when the binary layout is a fixed number of bytes.
+Use `c_char(count)` when the binary layout is a fixed number of bytes.
 
 ```python
 from typing import Annotated

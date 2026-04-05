@@ -1,11 +1,7 @@
 # CModel
 
-Model C structs with Pydantic.
-
-CModel is for the case where your Python program needs to read or write a binary
-layout that already exists in C. You define the layout once as a Pydantic model,
-validate data with normal Python types, then pack or unpack bytes with
-[`c_pack()`][cmodel.base.CModel.c_pack] and [`c_unpack()`][cmodel.base.CModel.c_unpack].
+Model C structs with Pydantic. Define the layout once as a Pydantic model
+inheriting from `CModel` and get packing and unpacking for free.
 
 ## Installation
 
@@ -16,12 +12,6 @@ pip install cmodel
 ```
 
 ## Simple Structs
-
-Install the package:
-
-```bash
-pip install cmodel
-```
 
 Define a struct as a model:
 
@@ -55,13 +45,6 @@ point = Point.c_unpack(buf)
 assert point == Point(x=3, y=7)
 ```
 
-That is the core workflow:
-
-1. Describe the binary layout with a [`CModel`][cmodel.base.CModel] subclass.
-1. Use [`cmodel.types`][cmodel.types] aliases, or `Annotated[..., CFmt(...)]`, to control field formats.
-1. Call [`c_pack()`][cmodel.base.CModel.c_pack] to write bytes.
-1. Call [`c_unpack()`][cmodel.base.CModel.c_unpack] to read bytes.
-
 ## Nested Structs
 
 Nested structs look like nested models:
@@ -94,7 +77,8 @@ from cmodel.types import c_int
 
 
 class Triangle(CModel):
-    coords: Annotated[tuple[int, int, int], c_int(3)]
+    x_coords: Annotated[tuple[int, int, int], c_int(3)]
+    y_coords: Annotated[tuple[int, int, int], c_int(3)]
 ```
 
 If you need a packed layout with no implicit alignment padding, set [`c_alignment`][cmodel.base.CModel.c_alignment] to `1`:

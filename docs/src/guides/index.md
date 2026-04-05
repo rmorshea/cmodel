@@ -1,12 +1,4 @@
-# Guides Overview
-
-Use the guides when you know the kind of binary layout you need to model and want the
-shortest path to a working definition.
-
-The guides are organized around the main layout decisions you make while describing a
-struct.
-
-## In this section
+# Overview
 
 ### [Model common structs](model-common-structs.md)
 
@@ -30,7 +22,7 @@ boundary and need confidence that the bytes land in the right positions.
 ### [Define custom field formats](define-custom-field-formats.md)
 
 Use this guide when the built-in aliases from [`cmodel.types`][cmodel.types] do not
-fully describe a field. It shows how to define a [`CFmt`][cmodel.base.CFmt], adapt raw
+fully describe a field. It shows how to define a [`CFormat`][cmodel.base.CFormat], adapt raw
 binary values into richer Python values, and keep custom formats reusable without
 blurring the boundary between field format and struct layout.
 

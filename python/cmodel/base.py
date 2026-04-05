@@ -74,13 +74,13 @@ class CModel(BaseModel):
 
 
 @dataclass
-class CFmt[T]:
+class CFormat[T]:
     """Binary format metadata for a field declared with `typing.Annotated`.
 
     `format` is a `struct`-style format string for the field itself. Optional
     `validate` and `dump` callables adapt between the raw tuple produced by `struct`
     operations and the Python value stored on the model. Attach it to a field with
-    `Annotated[..., CFmt(...)]`, or use helpers from [`cmodel.types`][cmodel.types]
+    `Annotated[..., CFormat(...)]`, or use helpers from [`cmodel.types`][cmodel.types]
     for the common scalar cases.
     """
 
