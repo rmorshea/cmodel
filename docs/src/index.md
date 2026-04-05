@@ -7,7 +7,7 @@ layout that already exists in C. You define the layout once as a Pydantic model,
 validate data with normal Python types, then pack or unpack bytes with
 `c_pack()` and `c_unpack()`.
 
-## Start with one struct
+## Simple Structs
 
 Install the package:
 
@@ -54,7 +54,7 @@ That is the core workflow:
 1. Call `c_pack()` to write bytes.
 1. Call `c_unpack()` to read bytes.
 
-## Build up from there
+## Nested Structs
 
 Nested structs look like nested models:
 

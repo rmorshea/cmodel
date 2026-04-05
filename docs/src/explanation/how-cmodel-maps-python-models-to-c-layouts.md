@@ -53,6 +53,11 @@ This separation matters because layout bugs often come from conflating field for
 struct packing. A field can still be an `Int`; what changes is where the next field is
 allowed to begin.
 
+## Byte order is determined at runtime
+
+The byte order of the data being packed or unpacked by a struct is determined by an
+`endian` argument passed to `CModel.c_pack` or `CModel.c_unpack`
+
 ## CModel prefers explicitness over ABI magic
 
 CModel is good at describing fixed layouts that you can reason about directly. It is not

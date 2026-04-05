@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
-from struct import calcsize
 from typing import Any
 from typing import ClassVar
 from typing import Self
@@ -17,6 +16,7 @@ from pydantic_core import core_schema as cs
 from cmodel import _utils
 from cmodel.schema import CFormatSchema
 from cmodel.schema import CStructSchema
+from cmodel.schema import Endian
 from cmodel.schema import c_schema_from_pydantic_core_schema
 from cmodel.schema import pack_c_schema
 from cmodel.schema import unpack_c_schema
@@ -59,15 +59,15 @@ class CModel(BaseModel):
             return py_schema
 
     @classmethod
-    def c_unpack(cls, buffer: BytesIO) -> Self:
+    def c_unpack(cls, buffer: BytesIO, *, endian: Endian = "=") -> Self:
         """Read one model instance from the current position of a binary buffer."""
-        value = unpack_c_schema(buffer, cls.c_schema)
+        value = unpack_c_schema(buffer, cls.c_schema, endian)
         return cls.model_validate(value)
 
-    def c_pack(self, buffer: BytesIO) -> None:
+    def c_pack(self, buffer: BytesIO, *, endian: Endian = "=") -> None:
         """Write this model instance to the current position of a binary buffer."""
         value = self.model_dump()
-        pack_c_schema(buffer, self.c_schema, value)
+        pack_c_schema(buffer, self.c_schema, endian, value)
 
 
 @dataclass
@@ -87,6 +87,16 @@ class CFmt[T]:
         if self.format.startswith(("@", "=", "<", ">", "!")):
             msg = "Format string should not include byte order or alignment characters"
             raise ValueError(msg)
+        current_char = ""
+        for char in self.format:
+            if char.isalpha():
+                if not current_char:
+                    current_char = char
+                elif current_char != char:
+                    # We enforce this because of how the endian formatting characters remove
+                    # padding between fields. If multiple types
+                    msg = "Format string must only contain one type of format character"
+                    raise ValueError(msg)
 
     def __get_pydantic_core_schema__(
         self,
@@ -98,11 +108,10 @@ class CFmt[T]:
             _utils.PydanticSchemaMetadata(
                 format_schema=CFormatSchema(
                     type="format",
-                    format=self.format,
-                    alignment=_utils.calc_format_alignment(self.format),
+                    format=_utils.compile_format_by_endian(self.format),
+                    alignment=_utils.get_format_alignment(self.format),
                     validate=self.validate,
                     dump=self.dump,
-                    size=calcsize(self.format),
                 )
             )
         )
