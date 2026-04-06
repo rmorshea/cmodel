@@ -45,6 +45,17 @@ convenience for code organization; it is how layout structure is preserved.
 If your source layout has a nested header and payload, model them as separate classes.
 The resulting documentation and generated reference will reflect that structure too.
 
+## Tagged unions select a variant by a tag field
+
+When a field is annotated as a union of [`CModel`][cmodel.base.CModel] subclasses with a Pydantic
+`Discriminator`, CModel treats it as a tagged union. On unpack, the tag field is read
+first to determine which variant layout to use. The selected variant is then unpacked
+from the beginning, and surrounding fields continue from where the variant ends.
+
+All variants must share the same tag field name and format. The tag field uses a
+`Literal` type to pin each variant to one or more values. This mirrors the C pattern of
+a union inside a struct where one member indicates which union field is active.
+
 ## Alignment is a struct-level decision
 
 [`CFormat`][cmodel.base.CFormat] describes a field. [`c_alignment`][cmodel.base.CModel.c_alignment] describes how a struct is laid out.

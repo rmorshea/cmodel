@@ -19,6 +19,16 @@ decision made at pack and unpack time.
 Read this page when you are matching an existing binary protocol, file format, or ABI
 boundary and need confidence that the bytes land in the right positions.
 
+### [Model tagged unions](model-tagged-unions.md)
+
+Use this guide when a binary protocol or file format sends one of several possible
+message layouts, identified by a shared tag field. It shows how to define variant
+models, combine them with a Pydantic discriminator, and pack or unpack the correct
+variant automatically.
+
+Read this page when the wire format includes a type tag that determines which struct
+layout follows.
+
 ### [Define custom field formats](define-custom-field-formats.md)
 
 Use this guide when the built-in aliases from [`cmodel.types`][cmodel.types] do not
@@ -33,6 +43,7 @@ specialized binary representation.
 
 - New to CModel: read these guides in order.
 - Working from an existing C declaration: start with [Model common structs](model-common-structs.md), then jump to [Control alignment and layout](control-alignment-and-layout.md).
+- Working with a type-tagged protocol: go to [Model tagged unions](model-tagged-unions.md).
 - Working with unusual field encodings: go straight to [Define custom field formats](define-custom-field-formats.md).
 
 If you are new to CModel, read these guides in order. If you already have a C struct or

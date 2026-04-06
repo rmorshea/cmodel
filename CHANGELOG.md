@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
+- Added support for Pydantic tagged unions ([#5](https://github.com/rmorshea/cmodel/pull/5))
+
 ## v0.1.0
 
 Initial release with all basic functionality:
