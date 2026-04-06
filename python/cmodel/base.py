@@ -14,9 +14,9 @@ from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
-from cmodel.schema import CFormatSchema
 from cmodel.schema import CStructSchema
-from cmodel.schema import Endian
+from cmodel.schema import EndianType
+from cmodel.schema import SizeType
 from cmodel.schema import c_schema_from_pydantic_core_schema
 from cmodel.schema import pack_c_schema
 from cmodel.schema import unpack_c_schema
@@ -32,14 +32,28 @@ class CModel(BaseModel):
 
     c_schema: ClassVar[CStructSchema]
     """The C struct schema for this model, derived from the Pydantic schema of the model"""
-    c_alignment: ClassVar[int | None] = None
-    """Optionally override the alignment of this struct. Native by default."""
+    c_alignment: ClassVar[int] = 0
+    """Override the alignment of this struct. Native by default (0)."""
+    c_endian_type: ClassVar[EndianType] = "native"
+    """Override the endianness of this struct. Native by default."""
+    c_size_type: ClassVar[SizeType] = "native"
+    """Override the size type of this struct. Native by default."""
 
     def __init_subclass__(
-        cls, *, c_alignment: int | None = None, **kwargs: Unpack[ConfigDict]
+        cls,
+        *,
+        c_alignment: int | None = None,
+        c_endian_type: EndianType | None = None,
+        c_size_type: SizeType | None = None,
+        **kwargs: Unpack[ConfigDict],
     ) -> None:
         super().__init_subclass__(**kwargs)
-        cls.c_alignment = c_alignment
+        if c_alignment is not None:
+            cls.c_alignment = c_alignment
+        if c_endian_type is not None:
+            cls.c_endian_type = c_endian_type
+        if c_size_type is not None:
+            cls.c_size_type = c_size_type
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -62,15 +76,15 @@ class CModel(BaseModel):
             return py_schema
 
     @classmethod
-    def c_unpack(cls, buffer: BytesIO, *, endian: Endian = "=") -> Self:
+    def c_unpack(cls, buffer: BytesIO) -> Self:
         """Read one model instance from the current position of a binary buffer."""
-        value = unpack_c_schema(buffer, cls.c_schema, endian)
+        value = unpack_c_schema(buffer, cls.c_schema)
         return cls.model_validate(value)
 
-    def c_pack(self, buffer: BytesIO, *, endian: Endian = "=") -> None:
+    def c_pack(self, buffer: BytesIO) -> None:
         """Write this model instance to the current position of a binary buffer."""
         value = self.model_dump()
-        pack_c_schema(buffer, self.c_schema, endian, value)
+        pack_c_schema(buffer, self.c_schema, value)
 
 
 @dataclass
@@ -109,15 +123,12 @@ class CFormat[T]:
         handler: GetCoreSchemaHandler,
     ) -> cs.CoreSchema:
         schema = handler(source)
-        schema.setdefault("metadata", {})[_utils.PYDANTIC_SCHEMA_METADATA_KEY] = (
-            _utils.PydanticSchemaMetadata(
-                format_schema=CFormatSchema(
-                    type="format",
-                    format=_utils.compile_format_by_endian(self.format),
-                    alignment=_utils.get_format_alignment(self.format),
-                    validate=self.validate,
-                    dump=self.dump,
-                )
-            )
+        _utils.set_pydantic_schema_metadata(
+            schema,
+            {
+                "format": self.format,
+                "validate": self.validate,
+                "dump": self.dump,
+            },
         )
         return schema
