@@ -10,6 +10,7 @@ nav:
       - Overview: guides/index.md
       - Model common structs: guides/model-common-structs.md
       - Control alignment and layout: guides/control-alignment-and-layout.md
+      - Model tagged unions: guides/model-tagged-unions.md
       - Define custom field formats: guides/define-custom-field-formats.md
   - Details: details.md
   - Reference: reference/
