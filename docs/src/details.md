@@ -68,11 +68,14 @@ This separation matters because layout bugs often come from conflating field for
 struct packing. A field can still be an `Int`; what changes is where the next field is
 allowed to begin.
 
-## Byte order is determined at runtime
+## Byte order and data type sizes are set at class definition time
 
-The byte order of the data being packed or unpacked by a struct is determined by an
-`endian` argument passed to [`c_pack()`][cmodel.base.CModel.c_pack] or [`c_unpack()`][cmodel.base.CModel.c_unpack]. This value does not
-affect alignment as it does in Python's `struct` module.
+The byte order and data type sizes of a struct are determined by
+[`c_endian_type`][cmodel.base.CModel.c_endian_type] and [`c_size_type`][cmodel.base.CModel.c_size_type],
+which are set as keyword arguments on the class definition. These two values are combined
+into a `struct` format prefix that is baked into the schema when the class is created.
+This means the binary layout of a model is fully determined by its class definition, not
+by arguments passed at pack or unpack time.
 
 ## CModel prefers explicitness over ABI magic
 

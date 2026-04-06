@@ -247,3 +247,132 @@ def test_tagged_union_requires_matching_tag_field_schema():
 
         class _MismatchedEnvelope(CModel):
             pet: An[_ShortTaggedCat | _IntTaggedDog, Discriminator("pet_type")]
+
+
+class LittleEndianPoint(CModel, c_endian_type="little", c_size_type="standard"):
+    x: Int
+    y: Int
+
+
+class BigEndianPoint(CModel, c_endian_type="big", c_size_type="standard"):
+    x: Int
+    y: Int
+
+
+class NetworkPoint(CModel, c_endian_type="network", c_size_type="standard"):
+    x: Int
+    y: Int
+
+
+class NativeStandardPoint(CModel, c_endian_type="native", c_size_type="standard"):
+    x: Int
+    y: Int
+
+
+class PackedLittleEndianMixed(
+    CModel, c_alignment=1, c_endian_type="little", c_size_type="standard"
+):
+    count: Int
+    flag: Bool
+    value: Float
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "prefix"),
+    [
+        (LittleEndianPoint, "<"),
+        (BigEndianPoint, ">"),
+        (NetworkPoint, "!"),
+        (NativeStandardPoint, "="),
+    ],
+)
+def test_endian_type_pack(model_cls, prefix):
+    model = model_cls(x=3, y=7)
+    buf = BytesIO()
+    model.c_pack(buf)
+    assert buf.getvalue() == struct.pack(f"{prefix}ii", 3, 7)
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "prefix"),
+    [
+        (LittleEndianPoint, "<"),
+        (BigEndianPoint, ">"),
+        (NetworkPoint, "!"),
+        (NativeStandardPoint, "="),
+    ],
+)
+def test_endian_type_unpack(model_cls, prefix):
+    buf = BytesIO(struct.pack(f"{prefix}ii", 3, 7))
+    result = model_cls.c_unpack(buf)
+    assert result.x == 3
+    assert result.y == 7
+
+
+@pytest.mark.parametrize(
+    "model_cls",
+    [LittleEndianPoint, BigEndianPoint, NetworkPoint, NativeStandardPoint],
+)
+def test_endian_type_roundtrip(model_cls):
+    original = model_cls(x=42, y=-1)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert model_cls.c_unpack(buf) == original
+
+
+def test_little_and_big_endian_differ():
+    le_buf = BytesIO()
+    LittleEndianPoint(x=1, y=2).c_pack(le_buf)
+    be_buf = BytesIO()
+    BigEndianPoint(x=1, y=2).c_pack(be_buf)
+    assert le_buf.getvalue() != be_buf.getvalue()
+
+
+def test_packed_little_endian_roundtrip():
+    original = PackedLittleEndianMixed(count=5, flag=True, value=1.5)
+    buf = BytesIO()
+    original.c_pack(buf)
+
+    packed_data = struct.pack("<i", 5) + struct.pack("<?", True) + struct.pack("<f", 1.5)
+    assert buf.getvalue() == packed_data
+
+    buf.seek(0)
+    assert PackedLittleEndianMixed.c_unpack(buf) == original
+
+
+def test_invalid_endian_size_combination():
+    with pytest.raises(ValueError, match="Invalid combination"):
+
+        class _BadModel(CModel, c_endian_type="little", c_size_type="native"):
+            x: Int
+
+
+def test_endian_type_inherited():
+    class Parent(CModel, c_endian_type="big", c_size_type="standard"):
+        x: Int
+
+    class Child(Parent):
+        y: Int
+
+    assert Child.c_endian_type == "big"
+    assert Child.c_size_type == "standard"
+
+    buf = BytesIO()
+    Child(x=1, y=2).c_pack(buf)
+    assert buf.getvalue() == struct.pack(">ii", 1, 2)
+
+
+def test_endian_type_overridden_by_subclass():
+    class Parent(CModel, c_endian_type="big", c_size_type="standard"):
+        x: Int
+
+    class Child(Parent, c_endian_type="little"):
+        y: Int
+
+    assert Child.c_endian_type == "little"
+    assert Child.c_size_type == "standard"
+
+    buf = BytesIO()
+    Child(x=1, y=2).c_pack(buf)
+    assert buf.getvalue() == struct.pack("<ii", 1, 2)
