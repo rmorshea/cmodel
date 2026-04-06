@@ -1,37 +1,56 @@
+from collections.abc import Callable
 from collections.abc import Collection
-from struct import Struct
 from struct import calcsize
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import TypedDict
+from typing import get_args
 
+from copier import Literal
 from pydantic_core import core_schema as cs
 
 if TYPE_CHECKING:
-    from cmodel.schema import CFormatByEndian
-    from cmodel.schema import CFormatSchema
+    from cmodel.base import CModel
     from cmodel.schema import CStructFieldSchema
 
 
-class PydanticSchemaMetadata(TypedDict, total=False):
+type Prefix = Literal["@", "=", "<", ">", "!"]  # noqa: F722
+"""A type for valid struct format string prefixes."""
+PREFIXES = set(get_args(Prefix))
+"""A set of valid struct format string prefixes."""
+
+
+class PydanticSchemaMetadata[T](TypedDict):
     """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
 
-    format_schema: "CFormatSchema[Any]"
+    format: str
+    """The format for this field compiled for each endian."""
+    validate: Callable[[tuple[Any, ...]], T]
+    """A function to convert the raw tuple produced by `struct.unpack` into a Python value."""
+    dump: Callable[[T], tuple[Any, ...]]
+    """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
 
 
-def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata:
+def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata | None:
     """Get the CModel metadata from a Pydantic core schema, if it exists."""
-    return schema.get("metadata", {}).get(PYDANTIC_SCHEMA_METADATA_KEY, {})
+    return schema.get("metadata", {}).get(PYDANTIC_SCHEMA_METADATA_KEY)
+
+
+def set_pydantic_schema_metadata(schema: cs.CoreSchema, metadata: PydanticSchemaMetadata) -> None:
+    """Set the CModel metadata on a Pydantic core schema."""
+    schema.setdefault("metadata", {})[PYDANTIC_SCHEMA_METADATA_KEY] = metadata
 
 
 PYDANTIC_SCHEMA_METADATA_KEY = "cmodel"
 
 
-def get_format_alignment(fmt: str) -> int:
+def get_format_alignment(prefix: Prefix, fmt: str) -> int:
     """Return the size and character of the most strictly aligned type in a C format string."""
     size = 0
     for new_char in fmt:
-        if (new_char.isalpha() or new_char == "?") and (new_size := calcsize(new_char)) > size:
+        if (new_char.isalpha() or new_char == "?") and (
+            new_size := calcsize(prefix + new_char)
+        ) > size:
             size = new_size
     if size == 0:
         msg = f"Format string {fmt} does not contain any valid format characters"
@@ -48,6 +67,19 @@ def identity(x: Any) -> Any:
     return x
 
 
-def compile_format_by_endian(fmt: str) -> "CFormatByEndian":
-    """Compile a format string into a CFormatByEndian with Struct objects for each endianness."""
-    return {endian: Struct(endian + fmt) for endian in ("=", "<", ">", "!")}
+def get_c_format_prefix(cls: type["CModel"]) -> Prefix:
+    """Get the format prefix for the given endianness and size."""
+    match (cls.c_endian_type, cls.c_size_type):
+        case ("native", "native"):
+            return "@"
+        case ("native", "standard"):
+            return "="
+        case ("little", "standard"):
+            return "<"
+        case ("big", "standard"):
+            return ">"
+        case ("network", "standard"):
+            return "!"
+        case (e, s):
+            msg = f"Invalid combination of endian_type {e} and size_type {s} for {cls}."
+            raise ValueError(msg)

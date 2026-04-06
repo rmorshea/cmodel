@@ -19,21 +19,20 @@ from cmodel import _utils
 CORE_SCHEMA_TYPES = get_args(cs.CoreSchemaType)
 
 
-Endian = Literal[
-    # @ is excluded because it means "native" endianness but also native alignment
-    "=",  # native
-    "<",  # little-endian
-    ">",  # big-endian
-    "!",  # network (big-endian)
-]
-"""The endianness (or byte order) of a C struct.
+type EndianType = Literal["native", "little", "big", "network"]
+"""The endianness of a C format."""
+type SizeType = Literal["standard", "native"]
+"""Whether to use standard sizes for C types or native sizes."""
 
-This only affects byte order. Alignment is determined separately by the alignment
-of the fields and any user-specified alignment on a model.
-"""
 
-type CFormatByEndian = Mapping[Endian, Struct]
-"""A mapping of endianness to `struct.Struct` objects for a particular format string."""
+# We define this as a separate type in case, in the future we want a non-precompiled version
+# in the schema (perhaps to be transferable to other languages). This could be defined as a
+# union of this and a CFormatString type, for example. For now though, we only have and handle
+# the compiled version.
+class CFormatCompiled(TypedDict):
+    """A compiled C format."""
+
+    compiled: Struct
 
 
 class CFormatSchema[T](TypedDict):
@@ -41,7 +40,7 @@ class CFormatSchema[T](TypedDict):
 
     type: Literal["format"]
 
-    format: CFormatByEndian
+    format: CFormatCompiled
     """The format for this field compiled for each endian."""
     alignment: int
     """The alignment of this schema in bytes."""
@@ -86,6 +85,8 @@ class CStructSchema(TypedDict):
     """The inner schemas for each field in the struct, keyed by field name."""
     alignment: int
     """The alignment of this struct in bytes computed as the max alignment of its fields."""
+    prefix: _utils.Prefix
+    """The format prefix to use for this struct, determined by the endianness and size"""
     anonymous: bool
     """Anonymous structs become tuples instead of dicts when unpacked."""
 
@@ -94,11 +95,11 @@ CSchema = CStructSchema | CFormatSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
-def unpack_c_schema(io: BytesIO, schema: CSchema, endian: Endian) -> Any:
+def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
     """Unpack a C struct from a buffer according to the provided schema."""
     match schema["type"]:
         case "format":
-            fmt = schema["format"][endian]
+            fmt = schema["format"]["compiled"]
             raw_value = fmt.unpack_from(io.getbuffer(), io.tell())
             io.seek(fmt.size, 1)
             return schema["validate"](raw_value)
@@ -108,49 +109,49 @@ def unpack_c_schema(io: BytesIO, schema: CSchema, endian: Endian) -> Any:
             if schema["anonymous"]:
                 tuple_values: list[Any] = []
                 for s in field_schemas.values():
-                    tuple_values.append(unpack_c_schema(io, s["schema"], endian))
+                    tuple_values.append(unpack_c_schema(io, s["schema"]))
                     # add padding to align to the next field
                     io.seek((alignment - (io.tell() % alignment)) % alignment, 1)
                 return tuple(tuple_values)
             else:
                 dict_values: dict[str, Any] = {}
                 for f, s in field_schemas.items():
-                    dict_values[f] = unpack_c_schema(io, s["schema"], endian)
+                    dict_values[f] = unpack_c_schema(io, s["schema"])
                     # add padding to align to the next field
                     io.seek((alignment - (io.tell() % alignment)) % alignment, 1)
                 return dict_values
         case "tagged-union":
             tag_schema = schema["tag_schema"]
-            tag_size = tag_schema["format"][endian].size
-            tag_value = unpack_c_schema(io, tag_schema, endian)
+            tag_size = tag_schema["format"]["compiled"].size
+            tag_value = unpack_c_schema(io, tag_schema)
             io.seek(io.tell() - tag_size, 0)  # rewind to the start of the tag field
             variant_schema = schema["variant_schemas"].get(tag_value)
             if variant_schema is None:
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
-            return unpack_c_schema(io, variant_schema, endian)
+            return unpack_c_schema(io, variant_schema)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
 
 
-def pack_c_schema(io: BytesIO, schema: CSchema, endian: Endian, value: Any) -> None:
+def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
     """Pack a value into a buffer according to the provided C schema."""
     match schema["type"]:
         case "format":
             args = schema["dump"](value)
-            io.write(schema["format"][endian].pack(*args))
+            io.write(schema["format"]["compiled"].pack(*args))
         case "struct":
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
             if schema["anonymous"]:
                 for s, v in zip(field_schemas.values(), value, strict=True):
-                    pack_c_schema(io, s["schema"], endian, v)
+                    pack_c_schema(io, s["schema"], v)
                     # add padding to align to the next field
                     io.write(b"\x00" * ((alignment - (io.tell() % alignment)) % alignment))
             else:
                 for f, s in field_schemas.items():
-                    pack_c_schema(io, s["schema"], endian, value[f])
+                    pack_c_schema(io, s["schema"], value[f])
                     # add padding to align to the next field
                     io.write(b"\x00" * ((alignment - (io.tell() % alignment)) % alignment))
         case "tagged-union":
@@ -159,7 +160,7 @@ def pack_c_schema(io: BytesIO, schema: CSchema, endian: Endian, value: Any) -> N
             if variant_schema is None:
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
-            pack_c_schema(io, variant_schema, endian, value)
+            pack_c_schema(io, variant_schema, value)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -170,19 +171,18 @@ def c_schema_from_pydantic_core_schema(
     handler: GetCoreSchemaHandler,
 ) -> CSchema:
     """Convert a Pydantic core schema to a CModel schema."""
-    fake_field_schema = CStructFieldSchema(
-        type="struct-field",
-        schema=None,  # pyright: ignore[reportArgumentType]
-        variable_length=False,
-    )
-    _visit(core_schema, handler, {"parent_field_schema": fake_field_schema})
-    return fake_field_schema["schema"]
+    struct_schema = _placeholder_struct_schema()
+    field_schema = _placeholder_struct_field_schema()
+    _visit(core_schema, handler, {"struct_schema": struct_schema, "field_schema": field_schema})
+    return field_schema["schema"]
 
 
 class _VisitorContext(TypedDict):
     """Context for the schema visitor."""
 
-    parent_field_schema: CStructFieldSchema
+    struct_schema: CStructSchema
+    """The schema of the struct currently being visited."""
+    field_schema: CStructFieldSchema
     """The schema of the current field being visited."""
 
 
@@ -192,9 +192,8 @@ def _visit(
     context: _VisitorContext,
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
-    metadata = _utils.get_pydantic_schema_metadata(py_schema)
-    if format_schema := metadata.get("format_schema"):
-        context["parent_field_schema"]["schema"] = format_schema
+    if metadata := _utils.get_pydantic_schema_metadata(py_schema):
+        context["field_schema"]["schema"] = _format_schema_from_pydantic_metadata(context, metadata)
         return
     match py_schema["type"]:
         case "model":
@@ -206,17 +205,17 @@ def _visit(
         case "tagged-union":
             _visit_tagged_union(py_schema, handler, context)
         case "int":
-            c_schema = _simple_format_schema("i")
-            context["parent_field_schema"]["schema"] = c_schema
+            c_schema = _simple_format_schema("i", context)
+            context["field_schema"]["schema"] = c_schema
         case "float":
-            c_schema = _simple_format_schema("f")
-            context["parent_field_schema"]["schema"] = c_schema
+            c_schema = _simple_format_schema("f", context)
+            context["field_schema"]["schema"] = c_schema
         case "bool":
-            c_schema = _simple_format_schema("?")
-            context["parent_field_schema"]["schema"] = c_schema
+            c_schema = _simple_format_schema("?", context)
+            context["field_schema"]["schema"] = c_schema
         case "bytes":
-            c_schema = _simple_format_schema("s")
-            context["parent_field_schema"]["schema"] = c_schema
+            c_schema = _simple_format_schema("s", context)
+            context["field_schema"]["schema"] = c_schema
         case "uuid":
             _visit_uuid(py_schema, handler, context)
         case "definition-ref":
@@ -235,28 +234,31 @@ def _visit_model(
     handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
+    if not issubclass(cls := py_schema["cls"], cmodel.CModel):
+        msg = f"Only CModel subclasses can be used as fields in a CModel, got {cls}"
+        raise TypeError(msg)
 
     c_schema = CStructSchema(
         type="struct",
         field_schemas={},
-        alignment=0,  # placeholder
+        alignment=cls.c_alignment,
+        prefix=_utils.get_c_format_prefix(cls),
         anonymous=False,
     )
 
-    parent_field_schema = context["parent_field_schema"]
-    parent_field_schema["schema"] = c_schema
+    field_schema = context["field_schema"]
+    field_schema["schema"] = c_schema
 
-    _visit(py_schema["schema"], handler, context)
+    _visit(
+        py_schema["schema"],
+        handler,
+        {"struct_schema": c_schema, "field_schema": _placeholder_struct_field_schema()},
+    )
 
-    # Use the model defined alignment or calculate it based on alignment requirement of fields
-    if issubclass(cls := py_schema["cls"], cmodel.CModel) and cls.c_alignment is not None:
-        alignment = cls.c_alignment
-    else:
-        alignment = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
+    c_field_schemas = c_schema["field_schemas"].values()
+    c_schema["alignment"] = cls.c_alignment or _utils.get_field_schema_alignment(c_field_schemas)
 
-    c_schema["alignment"] = alignment
-
-    _check_c_struct_schema(parent_field_schema, c_schema)
+    _check_c_struct_schema(field_schema, c_schema)
 
 
 def _visit_model_fields(
@@ -264,18 +266,17 @@ def _visit_model_fields(
     handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
-    parent_schema = context["parent_field_schema"]["schema"]
-
-    if parent_schema["type"] != "struct":
-        msg = "model-fields schema can only be used inside a model schema"
-        raise TypeError(msg)
-
+    struct_schema = context["struct_schema"]
     for f_name, py_f_schema in py_schema["fields"].items():
         c_f_schema = _placeholder_struct_field_schema(
             variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False)
         )
-        parent_schema["field_schemas"][f_name] = c_f_schema
-        _visit(py_f_schema["schema"], handler, {"parent_field_schema": c_f_schema})
+        struct_schema["field_schemas"][f_name] = c_f_schema
+        _visit(
+            py_f_schema["schema"],
+            handler,
+            {**context, "field_schema": c_f_schema},
+        )
 
 
 def _visit_tuple(
@@ -294,20 +295,25 @@ def _visit_tuple(
         type="struct",
         field_schemas={},
         alignment=0,  # placeholder
+        prefix=context["struct_schema"]["prefix"],
         anonymous=True,
     )
 
-    parent_field_schema = context["parent_field_schema"]
-    parent_field_schema["schema"] = c_schema
+    field_schema = context["field_schema"]
+    field_schema["schema"] = c_schema
 
     for i, item_schema in enumerate(py_schema["items_schema"]):
         c_f_schema = _placeholder_struct_field_schema(variable_length=i == variadic_item_index)
         c_schema["field_schemas"][str(i)] = c_f_schema
-        _visit(item_schema, handler, {"parent_field_schema": c_f_schema})
+        _visit(
+            item_schema,
+            handler,
+            {**context, "field_schema": c_f_schema},
+        )
 
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
-    _check_c_struct_schema(parent_field_schema, c_schema)
+    _check_c_struct_schema(field_schema, c_schema)
 
 
 def _visit_tagged_union(
@@ -323,7 +329,7 @@ def _visit_tagged_union(
     c_choice_fields: Mapping[Hashable, CStructFieldSchema] = {}
     for py_choice_value, py_choice_schema in py_schema["choices"].items():
         fake_field = _placeholder_struct_field_schema()  # captures the choice schema
-        _visit(py_choice_schema, handler, {"parent_field_schema": fake_field})
+        _visit(py_choice_schema, handler, {**context, "field_schema": fake_field})
         c_choice_fields[py_choice_value] = fake_field
     if not c_choice_fields:
         msg = "Tagged unions must have at least one variant"
@@ -333,7 +339,7 @@ def _visit_tagged_union(
     variable_length_values = [c["variable_length"] for c in c_choice_fields.values()]
     if any(variable_length_values):
         if all(variable_length_values):
-            context["parent_field_schema"]["variable_length"] = True
+            context["field_schema"]["variable_length"] = True
         else:
             msg = "All variants of a tagged union must be variable length if any of them are"
             raise ValueError(msg)
@@ -367,7 +373,7 @@ def _visit_tagged_union(
             )
             raise ValueError(msg)
 
-    context["parent_field_schema"]["schema"] = CTaggedUnionSchema(
+    context["field_schema"]["schema"] = CTaggedUnionSchema(
         type="tagged-union",
         alignment=max(c_schema["alignment"] for c_schema in c_choices.values()),
         tag_field=tag_field,
@@ -381,18 +387,19 @@ def _visit_uuid(
     handler: GetCoreSchemaHandler,  # noqa: ARG001
     context: _VisitorContext,
 ) -> None:
+    compiled = Struct(context["struct_schema"]["prefix"] + "16s")
     c_schema = CFormatSchema(
         type="format",
-        format=_utils.compile_format_by_endian("16s"),
-        alignment=_utils.get_format_alignment("s"),
+        format={"compiled": compiled},
+        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], "s"),
         validate=lambda x: UUID(bytes=x[0]),
         dump=lambda x: (x.bytes,),
     )
-    context["parent_field_schema"]["schema"] = c_schema
+    context["field_schema"]["schema"] = c_schema
 
 
 def _check_c_struct_schema(
-    parent_field_schema: CStructFieldSchema,
+    field_schema: CStructFieldSchema,
     c_schema: CStructSchema,
 ) -> None:
     for f_index, f_schema in enumerate(c_schema["field_schemas"].values()):
@@ -400,17 +407,55 @@ def _check_c_struct_schema(
             if f_index != len(c_schema["field_schemas"]) - 1:
                 msg = "Variable length fields must be the last field in a struct"
                 raise ValueError(msg)
-            parent_field_schema["variable_length"] = True
+            field_schema["variable_length"] = True
 
 
-def _simple_format_schema(fmt: str) -> CFormatSchema:
+def _simple_format_schema(fmt: str, context: _VisitorContext) -> CFormatSchema:
     """Return a CFormatSchema from a format string without special validate or dump functions."""
+    compiled = Struct(context["struct_schema"]["prefix"] + fmt)
     return CFormatSchema(
         type="format",
-        format=_utils.compile_format_by_endian(fmt),
-        alignment=_utils.get_format_alignment(fmt),
+        format={"compiled": compiled},
+        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
         validate=operator.itemgetter(0),
         dump=lambda x: (x,),
+    )
+
+
+def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
+    return (
+        right["type"] == "format"
+        and left["format"]["compiled"].format == right["format"]["compiled"].format
+        and left["alignment"] == right["alignment"]
+    )
+
+
+def _format_schema_from_pydantic_metadata(
+    context: _VisitorContext, metadata: _utils.PydanticSchemaMetadata
+) -> CFormatSchema:
+    """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
+    fmt = metadata["format"]
+    return CFormatSchema(
+        type="format",
+        format={"compiled": Struct(context["struct_schema"]["prefix"] + fmt)},
+        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
+        validate=metadata["validate"],
+        dump=metadata["dump"],
+    )
+
+
+def _placeholder_struct_schema(
+    *,
+    anonymous: bool = False,
+    prefix: _utils.Prefix = "@",
+) -> CStructSchema:
+    """Return a placeholder CStructSchema that can be used to build up a CStructSchema."""
+    return CStructSchema(
+        type="struct",
+        field_schemas={},
+        alignment=0,  # placeholder
+        prefix=prefix,
+        anonymous=anonymous,
     )
 
 
@@ -421,15 +466,4 @@ def _placeholder_struct_field_schema(*, variable_length: bool = False) -> CStruc
         # The schema needs to be filled in later by a visitor
         schema=None,  # pyright: ignore[reportArgumentType]
         variable_length=variable_length,
-    )
-
-
-def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
-    if right["type"] != "format":
-        return False
-    return (
-        # the formats should all be the same so just check one endian
-        left["format"]["="].format == right["format"]["="].format
-        and left["alignment"] == right["alignment"]
-        # the validate/dump functions don't matter
     )
