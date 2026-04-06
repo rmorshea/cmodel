@@ -20,9 +20,7 @@ PREFIXES = set(get_args(Prefix))
 """A set of valid struct format string prefixes."""
 
 
-class PydanticSchemaMetadata[T](TypedDict):
-    """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
-
+class PydanticCFormatMetadata[T](TypedDict):
     format: str
     """The format for this field compiled for each endian."""
     validate: Callable[[tuple[Any, ...]], T]
@@ -31,12 +29,30 @@ class PydanticSchemaMetadata[T](TypedDict):
     """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
 
 
-def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata | None:
+class PydanticCRawMetadata[T](TypedDict):
+    size: int | None
+    """The size of the bytes field. None is variable-length."""
+    alignment: int
+    """The alignment of the bytes field."""
+    validate: Callable[[bytes], T]
+    """A function to convert raw bytes into a Python value."""
+    dump: Callable[[T], bytes]
+    """A function to convert a Python value into raw bytes."""
+
+
+class PydanticMetadata(TypedDict, total=False):
+    """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
+
+    c_format: PydanticCFormatMetadata
+    c_raw: PydanticCRawMetadata
+
+
+def get_pydantic_metadata(schema: cs.CoreSchema) -> PydanticMetadata | None:
     """Get the CModel metadata from a Pydantic core schema, if it exists."""
     return schema.get("metadata", {}).get(PYDANTIC_SCHEMA_METADATA_KEY)
 
 
-def set_pydantic_schema_metadata(schema: cs.CoreSchema, metadata: PydanticSchemaMetadata) -> None:
+def set_pydantic_metadata(schema: cs.CoreSchema, metadata: PydanticMetadata) -> None:
     """Set the CModel metadata on a Pydantic core schema."""
     schema.setdefault("metadata", {})[PYDANTIC_SCHEMA_METADATA_KEY] = metadata
 

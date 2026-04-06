@@ -36,7 +36,7 @@ class CFormatCompiled(TypedDict):
 
 
 class CFormatSchema[T](TypedDict):
-    """A schema for a single field in a C struct."""
+    """A schema for a single C value."""
 
     type: Literal["format"]
 
@@ -48,6 +48,21 @@ class CFormatSchema[T](TypedDict):
     """A function to convert the raw tuple produced by `struct.unpack` into a Python value."""
     dump: Callable[[T], tuple[Any, ...]]
     """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
+
+
+class CRawSchema[T](TypedDict):
+    """A schema for a C-compatible bytes field."""
+
+    type: Literal["raw"]
+
+    size: int | None
+    """The size of the bytes field. None is variable-length."""
+    alignment: int
+    """The alignment of the bytes field."""
+    validate: Callable[[bytes], T]
+    """A function to convert raw bytes into a Python value."""
+    dump: Callable[[T], bytes]
+    """A function to convert a Python value into raw bytes."""
 
 
 class CStructFieldSchema(TypedDict):
@@ -91,13 +106,16 @@ class CStructSchema(TypedDict):
     """Anonymous structs become tuples instead of dicts when unpacked."""
 
 
-CSchema = CStructSchema | CFormatSchema | CTaggedUnionSchema
+CSchema = CStructSchema | CFormatSchema | CRawSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
 def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
     """Unpack a C struct from a buffer according to the provided schema."""
     match schema["type"]:
+        case "raw":
+            raw_bytes = io.read() if schema["size"] is None else io.read(schema["size"])
+            return schema["validate"](raw_bytes)
         case "format":
             fmt = schema["format"]["compiled"]
             raw_value = fmt.unpack_from(io.getbuffer(), io.tell())
@@ -138,6 +156,12 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
 def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
     """Pack a value into a buffer according to the provided C schema."""
     match schema["type"]:
+        case "raw":
+            raw_bytes = schema["dump"](value)
+            if (size := schema["size"]) is not None and len(raw_bytes) != size:
+                msg = f"Raw bytes field must be exactly {size} bytes, got {len(raw_bytes)}"
+                raise ValueError(msg)
+            io.write(raw_bytes)
         case "format":
             args = schema["dump"](value)
             io.write(schema["format"]["compiled"].pack(*args))
@@ -192,7 +216,7 @@ def _visit(
     context: _VisitorContext,
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
-    if metadata := _utils.get_pydantic_schema_metadata(py_schema):
+    if metadata := _utils.get_pydantic_metadata(py_schema):
         context["field_schema"]["schema"] = _format_schema_from_pydantic_metadata(context, metadata)
         return
     match py_schema["type"]:
@@ -431,17 +455,30 @@ def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
 
 
 def _format_schema_from_pydantic_metadata(
-    context: _VisitorContext, metadata: _utils.PydanticSchemaMetadata
-) -> CFormatSchema:
+    context: _VisitorContext, metadata: _utils.PydanticMetadata
+) -> CFormatSchema | CRawSchema:
     """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
-    fmt = metadata["format"]
-    return CFormatSchema(
-        type="format",
-        format={"compiled": Struct(context["struct_schema"]["prefix"] + fmt)},
-        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
-        validate=metadata["validate"],
-        dump=metadata["dump"],
-    )
+    match metadata:
+        case {"c_format": c_format_metadata}:
+            fmt = c_format_metadata["format"]
+            return CFormatSchema(
+                type="format",
+                format={"compiled": Struct(context["struct_schema"]["prefix"] + fmt)},
+                alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
+                validate=c_format_metadata["validate"],
+                dump=c_format_metadata["dump"],
+            )
+        case {"c_raw": c_raw_metadata}:
+            return CRawSchema(
+                type="raw",
+                size=c_raw_metadata["size"],
+                alignment=c_raw_metadata["alignment"],
+                validate=c_raw_metadata["validate"],
+                dump=c_raw_metadata["dump"],
+            )
+        case _:
+            msg = f"Invalid pydantic metadata: {metadata}"
+            raise ValueError(msg)
 
 
 def _placeholder_struct_schema(

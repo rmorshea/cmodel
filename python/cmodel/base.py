@@ -89,7 +89,7 @@ class CModel(BaseModel):
 
 @dataclass
 class CFormat[T]:
-    """Binary format metadata for a field declared with `typing.Annotated`.
+    """`Annotated` metadata for C struct formating.
 
     `format` is a `struct`-style format string for the field itself. Optional
     `validate` and `dump` callables adapt between the raw tuple produced by `struct`
@@ -99,8 +99,11 @@ class CFormat[T]:
     """
 
     format: str
+    """The C struct format string for this value."""
     validate: Callable[[tuple[Any, ...]], T] = lambda x: x  # pyright: ignore[reportAssignmentType]
+    """A function to convert the raw tuple produced by `struct.unpack` into a Python value."""
     dump: Callable[[T], tuple[Any, ...]] = lambda x: x  # pyright: ignore[reportAssignmentType]
+    """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
 
     def __post_init__(self) -> None:
         if self.format.startswith(("@", "=", "<", ">", "!")):
@@ -123,12 +126,52 @@ class CFormat[T]:
         handler: GetCoreSchemaHandler,
     ) -> cs.CoreSchema:
         schema = handler(source)
-        _utils.set_pydantic_schema_metadata(
+        _utils.set_pydantic_metadata(
             schema,
             {
-                "format": self.format,
-                "validate": self.validate,
-                "dump": self.dump,
+                "c_format": {
+                    "format": self.format,
+                    "validate": self.validate,
+                    "dump": self.dump,
+                }
+            },
+        )
+        return schema
+
+
+@dataclass
+class CRaw[T]:
+    """`Annotated` metadata for C-compatible bytes fields.
+
+    `size` is the size of the bytes field, or None for variable-length. `alignment` is the
+    alignment of the field in bytes. `validate` and `dump` convert between raw bytes and the Python
+    value stored on the model. Attach it to a field with `Annotated[..., CBytes(...)]`.
+    """
+
+    size: int | None
+    """The number of bytes this value occupies. None for variable-length."""
+    alignment: int
+    """The alignment requirement for this value."""
+    validate: Callable[[bytes], T]
+    """A function to convert raw bytes into a Python value."""
+    dump: Callable[[T], bytes]
+    """A function to convert a Python value into raw bytes."""
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> cs.CoreSchema:
+        schema = handler(source)
+        _utils.set_pydantic_metadata(
+            schema,
+            {
+                "c_raw": {
+                    "size": self.size,
+                    "alignment": self.alignment,
+                    "validate": self.validate,
+                    "dump": self.dump,
+                }
             },
         )
         return schema
