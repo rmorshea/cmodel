@@ -7,6 +7,7 @@ import pytest
 from pydantic import Discriminator
 
 from cmodel.base import CModel
+from cmodel.base import CRaw
 from cmodel.types import Bool
 from cmodel.types import Float
 from cmodel.types import Int
@@ -376,3 +377,95 @@ def test_endian_type_overridden_by_subclass():
     buf = BytesIO()
     Child(x=1, y=2).c_pack(buf)
     assert buf.getvalue() == struct.pack("<ii", 1, 2)
+
+
+FixedBytes = An[bytes, CRaw(size=4, alignment=1, validate=lambda b: b, dump=lambda b: b)]
+
+
+class FixedRawModel(CModel):
+    header: Int
+    data: FixedBytes
+
+
+def test_raw_fixed_unpack():
+    buf = BytesIO(struct.pack("i", 42) + b"\xde\xad\xbe\xef")
+    result = FixedRawModel.c_unpack(buf)
+    assert result.header == 42
+    assert result.data == b"\xde\xad\xbe\xef"
+
+
+def test_raw_fixed_pack():
+    model = FixedRawModel(header=42, data=b"\xde\xad\xbe\xef")
+    buf = BytesIO()
+    model.c_pack(buf)
+    assert buf.getvalue() == struct.pack("i", 42) + b"\xde\xad\xbe\xef"
+
+
+def test_raw_fixed_roundtrip():
+    original = FixedRawModel(header=42, data=b"\xde\xad\xbe\xef")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert FixedRawModel.c_unpack(buf) == original
+
+
+def test_raw_fixed_pack_rejects_wrong_size():
+    model = FixedRawModel(header=1, data=b"\x00\x00")
+    buf = BytesIO()
+    with pytest.raises(ValueError, match="exactly 4 bytes"):
+        model.c_pack(buf)
+
+
+HexString = An[
+    str,
+    CRaw(
+        size=4,
+        alignment=1,
+        validate=lambda b: b.hex(),
+        dump=lambda s: bytes.fromhex(s),
+    ),
+]
+
+
+class HexRawModel(CModel):
+    value: HexString
+
+
+def test_raw_validate_and_dump_adapt_types():
+    buf = BytesIO(b"\xca\xfe\xba\xbe")
+    result = HexRawModel.c_unpack(buf)
+    assert result.value == "cafebabe"
+
+    out = BytesIO()
+    result.c_pack(out)
+    assert out.getvalue() == b"\xca\xfe\xba\xbe"
+
+
+VarBytes = An[bytes, CRaw(size=None, alignment=1, validate=lambda b: b, dump=lambda b: b)]
+
+
+class VarRawModel(CModel, c_alignment=1):
+    header: Int
+    payload: VarBytes
+
+
+def test_raw_variable_length_unpack_reads_remaining():
+    buf = BytesIO(struct.pack("i", 99) + b"\x01\x02\x03\x04\x05")
+    result = VarRawModel.c_unpack(buf)
+    assert result.header == 99
+    assert result.payload == b"\x01\x02\x03\x04\x05"
+
+
+def test_raw_variable_length_pack():
+    model = VarRawModel(header=99, payload=b"\x01\x02\x03")
+    buf = BytesIO()
+    model.c_pack(buf)
+    assert buf.getvalue() == struct.pack("i", 99) + b"\x01\x02\x03"
+
+
+def test_raw_variable_length_roundtrip():
+    original = VarRawModel(header=99, payload=b"\xaa\xbb")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert VarRawModel.c_unpack(buf) == original

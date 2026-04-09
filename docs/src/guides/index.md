@@ -39,12 +39,22 @@ blurring the boundary between field format and struct layout.
 Read this page when the structure is straightforward but one or two fields need a more
 specialized binary representation.
 
+### [Handle raw bytes fields](handle-raw-bytes-fields.md)
+
+Use this guide when a field cannot be described by a `struct` format string at all.
+It shows how to use [`CRaw`][cmodel.base.CRaw] to read and write raw bytes directly,
+adapt them to richer Python types, and handle variable-length trailing fields.
+
+Read this page when a field is an opaque blob, uses a custom encoding, or consumes
+the rest of the buffer.
+
 ## Reading path
 
 - New to CModel: read these guides in order.
 - Working from an existing C declaration: start with [Model common structs](model-common-structs.md), then jump to [Control alignment and layout](control-alignment-and-layout.md).
 - Working with a type-tagged protocol: go to [Model tagged unions](model-tagged-unions.md).
 - Working with unusual field encodings: go straight to [Define custom field formats](define-custom-field-formats.md).
+- Working with opaque blobs or custom byte encodings: go to [Handle raw bytes fields](handle-raw-bytes-fields.md).
 
 If you are new to CModel, read these guides in order. If you already have a C struct or
 wire format in hand, jump directly to the guide that matches the layout problem you are

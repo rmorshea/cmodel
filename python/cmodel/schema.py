@@ -469,13 +469,15 @@ def _format_schema_from_pydantic_metadata(
                 dump=c_format_metadata["dump"],
             )
         case {"c_raw": c_raw_metadata}:
-            return CRawSchema(
+            schema = CRawSchema(
                 type="raw",
                 size=c_raw_metadata["size"],
                 alignment=c_raw_metadata["alignment"],
                 validate=c_raw_metadata["validate"],
                 dump=c_raw_metadata["dump"],
             )
+            context["field_schema"]["variable_length"] = c_raw_metadata["size"] is None
+            return schema
         case _:
             msg = f"Invalid pydantic metadata: {metadata}"
             raise ValueError(msg)

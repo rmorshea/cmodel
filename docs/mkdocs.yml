@@ -12,6 +12,7 @@ nav:
       - Control alignment and layout: guides/control-alignment-and-layout.md
       - Model tagged unions: guides/model-tagged-unions.md
       - Define custom field formats: guides/define-custom-field-formats.md
+      - Handle raw bytes fields: guides/handle-raw-bytes-fields.md
   - Details: details.md
   - Reference: reference/
   - Changelog: changelog.md
