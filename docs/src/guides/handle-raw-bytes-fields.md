@@ -1,7 +1,7 @@
 # Handle raw bytes fields
 
-Use [`CRaw`][cmodel.base.CRaw] when a field does not map to a `struct` format string
-at all. [`CRaw`][cmodel.base.CRaw] gives you direct control over reading and writing
+Use [`CBytes`][cmodel.base.CBytes] when a field does not map to a `struct` format string
+at all. [`CBytes`][cmodel.base.CBytes] gives you direct control over reading and writing
 raw bytes, while still participating in the normal CModel pack and unpack flow.
 
 This is useful when:
@@ -19,12 +19,12 @@ identity `validate` / `dump` functions to pass bytes through unchanged.
 from typing import Annotated
 
 from cmodel import CModel
-from cmodel import CRaw
+from cmodel import CBytes
 from cmodel.types import Int
 
 FixedBlob = Annotated[
     bytes,
-    CRaw(size=4, alignment=1, validate=lambda b: b, dump=lambda b: b),
+    CBytes(size=4, alignment=1, validate=lambda b: b, dump=lambda b: b),
 ]
 
 
@@ -46,11 +46,11 @@ representation, just like `validate` and `dump` on [`CFormat`][cmodel.base.CForm
 from typing import Annotated
 
 from cmodel import CModel
-from cmodel import CRaw
+from cmodel import CBytes
 
 HexString = Annotated[
     str,
-    CRaw(
+    CBytes(
         size=4,
         alignment=1,
         validate=lambda b: b.hex(),
@@ -75,12 +75,12 @@ must be the last field in the struct.
 from typing import Annotated
 
 from cmodel import CModel
-from cmodel import CRaw
+from cmodel import CBytes
 from cmodel.types import Int
 
 VarBytes = Annotated[
     bytes,
-    CRaw(size=None, alignment=1, validate=lambda b: b, dump=lambda b: b),
+    CBytes(size=None, alignment=1, validate=lambda b: b, dump=lambda b: b),
 ]
 
 
@@ -92,10 +92,10 @@ class Message(CModel, c_alignment=1):
 On unpack, `payload` reads from the current position to the end of the buffer. On pack,
 whatever bytes `dump` returns are written directly.
 
-## When to use CRaw versus CFormat
+## When to use CBytes versus CFormat
 
 [`CFormat`][cmodel.base.CFormat] works well when the wire encoding maps onto Python's
-`struct` format characters. Use [`CRaw`][cmodel.base.CRaw] when:
+`struct` format characters. Use [`CBytes`][cmodel.base.CBytes] when:
 
 - the encoding cannot be expressed as a `struct` format string
 - you need byte-level control over serialization and deserialization

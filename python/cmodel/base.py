@@ -89,7 +89,7 @@ class CModel(BaseModel):
 
 @dataclass
 class CFormat[T]:
-    """`Annotated` metadata for C struct formating.
+    """`Annotated` metadata for values that can be expressed as a `struct` format string.
 
     `format` is a `struct`-style format string for the field itself. Optional
     `validate` and `dump` callables adapt between the raw tuple produced by `struct`
@@ -140,8 +140,8 @@ class CFormat[T]:
 
 
 @dataclass
-class CRaw[T]:
-    """`Annotated` metadata for C-compatible bytes fields.
+class CBytes[T]:
+    """`Annotated` metadata for values that can only be expressed as raw bytes.
 
     `size` is the size of the bytes field, or None for variable-length. `alignment` is the
     alignment of the field in bytes. `validate` and `dump` convert between raw bytes and the Python
@@ -166,7 +166,7 @@ class CRaw[T]:
         _utils.set_pydantic_metadata(
             schema,
             {
-                "c_raw": {
+                "c_bytes": {
                     "size": self.size,
                     "alignment": self.alignment,
                     "validate": self.validate,

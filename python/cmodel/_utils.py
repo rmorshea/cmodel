@@ -29,7 +29,7 @@ class PydanticCFormatMetadata[T](TypedDict):
     """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
 
 
-class PydanticCRawMetadata[T](TypedDict):
+class PydanticCBytesMetadata[T](TypedDict):
     size: int | None
     """The size of the bytes field. None is variable-length."""
     alignment: int
@@ -44,7 +44,7 @@ class PydanticMetadata(TypedDict, total=False):
     """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
 
     c_format: PydanticCFormatMetadata
-    c_raw: PydanticCRawMetadata
+    c_bytes: PydanticCBytesMetadata
 
 
 def get_pydantic_metadata(schema: cs.CoreSchema) -> PydanticMetadata | None:

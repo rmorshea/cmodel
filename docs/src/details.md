@@ -38,7 +38,7 @@ Formats such as `BBB` are fine, but mixed-type formats such as `Bh` are not. Whe
 logical value needs mixed field types, represent it as a tuple or nested model instead.
 
 When a field cannot be expressed as a `struct` format string at all, use
-[`CRaw`][cmodel.base.CRaw] instead. [`CRaw`][cmodel.base.CRaw] takes a fixed byte
+[`CBytes`][cmodel.base.CBytes] instead. [`CBytes`][cmodel.base.CBytes] takes a fixed byte
 count (or `None` for variable-length), an alignment, and `validate` / `dump` callables
 that convert between raw bytes and the Python value. This is useful for opaque blobs,
 custom encodings, or trailing payloads that consume the rest of the buffer.

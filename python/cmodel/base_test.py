@@ -6,8 +6,8 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
+from cmodel.base import CBytes
 from cmodel.base import CModel
-from cmodel.base import CRaw
 from cmodel.types import Bool
 from cmodel.types import Float
 from cmodel.types import Int
@@ -379,7 +379,7 @@ def test_endian_type_overridden_by_subclass():
     assert buf.getvalue() == struct.pack("<ii", 1, 2)
 
 
-FixedBytes = An[bytes, CRaw(size=4, alignment=1, validate=lambda b: b, dump=lambda b: b)]
+FixedBytes = An[bytes, CBytes(size=4, alignment=1, validate=lambda b: b, dump=lambda b: b)]
 
 
 class FixedRawModel(CModel):
@@ -418,7 +418,7 @@ def test_raw_fixed_pack_rejects_wrong_size():
 
 HexString = An[
     str,
-    CRaw(
+    CBytes(
         size=4,
         alignment=1,
         validate=lambda b: b.hex(),
@@ -441,7 +441,7 @@ def test_raw_validate_and_dump_adapt_types():
     assert out.getvalue() == b"\xca\xfe\xba\xbe"
 
 
-VarBytes = An[bytes, CRaw(size=None, alignment=1, validate=lambda b: b, dump=lambda b: b)]
+VarBytes = An[bytes, CBytes(size=None, alignment=1, validate=lambda b: b, dump=lambda b: b)]
 
 
 class VarRawModel(CModel, c_alignment=1):

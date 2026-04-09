@@ -50,7 +50,7 @@ class CFormatSchema[T](TypedDict):
     """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
 
 
-class CRawSchema[T](TypedDict):
+class CBytesSchema[T](TypedDict):
     """A schema for a C-compatible bytes field."""
 
     type: Literal["raw"]
@@ -106,7 +106,7 @@ class CStructSchema(TypedDict):
     """Anonymous structs become tuples instead of dicts when unpacked."""
 
 
-CSchema = CStructSchema | CFormatSchema | CRawSchema | CTaggedUnionSchema
+CSchema = CStructSchema | CFormatSchema | CBytesSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
@@ -217,7 +217,7 @@ def _visit(
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
     if metadata := _utils.get_pydantic_metadata(py_schema):
-        context["field_schema"]["schema"] = _format_schema_from_pydantic_metadata(context, metadata)
+        context["field_schema"]["schema"] = _c_schema_from_pydantic_metadata(context, metadata)
         return
     match py_schema["type"]:
         case "model":
@@ -454,9 +454,9 @@ def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
     )
 
 
-def _format_schema_from_pydantic_metadata(
+def _c_schema_from_pydantic_metadata(
     context: _VisitorContext, metadata: _utils.PydanticMetadata
-) -> CFormatSchema | CRawSchema:
+) -> CFormatSchema | CBytesSchema:
     """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
     match metadata:
         case {"c_format": c_format_metadata}:
@@ -468,15 +468,15 @@ def _format_schema_from_pydantic_metadata(
                 validate=c_format_metadata["validate"],
                 dump=c_format_metadata["dump"],
             )
-        case {"c_raw": c_raw_metadata}:
-            schema = CRawSchema(
+        case {"c_bytes": c_bytes_metadata}:
+            schema = CBytesSchema(
                 type="raw",
-                size=c_raw_metadata["size"],
-                alignment=c_raw_metadata["alignment"],
-                validate=c_raw_metadata["validate"],
-                dump=c_raw_metadata["dump"],
+                size=c_bytes_metadata["size"],
+                alignment=c_bytes_metadata["alignment"],
+                validate=c_bytes_metadata["validate"],
+                dump=c_bytes_metadata["dump"],
             )
-            context["field_schema"]["variable_length"] = c_raw_metadata["size"] is None
+            context["field_schema"]["variable_length"] = c_bytes_metadata["size"] is None
             return schema
         case _:
             msg = f"Invalid pydantic metadata: {metadata}"

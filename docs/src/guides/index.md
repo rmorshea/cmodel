@@ -42,7 +42,7 @@ specialized binary representation.
 ### [Handle raw bytes fields](handle-raw-bytes-fields.md)
 
 Use this guide when a field cannot be described by a `struct` format string at all.
-It shows how to use [`CRaw`][cmodel.base.CRaw] to read and write raw bytes directly,
+It shows how to use [`CBytes`][cmodel.base.CBytes] to read and write raw bytes directly,
 adapt them to richer Python types, and handle variable-length trailing fields.
 
 Read this page when a field is an opaque blob, uses a custom encoding, or consumes
