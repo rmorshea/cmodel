@@ -1,3 +1,5 @@
+import ctypes
+import math
 import struct
 from io import BytesIO
 from typing import Annotated as An
@@ -6,10 +8,16 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
+from cmodel.base import CEncoded
 from cmodel.base import CModel
+from cmodel.schema import CEncoderSchema
 from cmodel.types import Bool
+from cmodel.types import Double
 from cmodel.types import Float
 from cmodel.types import Int
+from cmodel.types import RawBytes
+from cmodel.types import Short
+from cmodel.types import SignedChar
 from cmodel.types import c_int
 from cmodel.types import c_short
 
@@ -243,7 +251,7 @@ def test_tagged_union_requires_matching_tag_field_schema():
         barks: Float
         trained: Bool
 
-    with pytest.raises(ValueError, match="same tag field schema"):
+    with pytest.raises(ValueError, match="same tag schema"):
 
         class _MismatchedEnvelope(CModel):
             pet: An[_ShortTaggedCat | _IntTaggedDog, Discriminator("pet_type")]
@@ -376,3 +384,195 @@ def test_endian_type_overridden_by_subclass():
     buf = BytesIO()
     Child(x=1, y=2).c_pack(buf)
     assert buf.getvalue() == struct.pack("<ii", 1, 2)
+
+
+class TrailingBytesModel(CModel):
+    header: Int
+    data: RawBytes
+
+
+def test_c_encoded_raw_bytes_unpack():
+    payload = struct.pack("i", 42) + b"\xde\xad\xbe\xef"
+    result = TrailingBytesModel.c_unpack(BytesIO(payload))
+    assert result.header == 42
+    assert result.data == b"\xde\xad\xbe\xef"
+
+
+def test_c_encoded_raw_bytes_pack():
+    model = TrailingBytesModel(header=42, data=b"\xde\xad\xbe\xef")
+    buf = BytesIO()
+    model.c_pack(buf)
+    assert buf.getvalue() == struct.pack("i", 42) + b"\xde\xad\xbe\xef"
+
+
+def test_c_encoded_raw_bytes_roundtrip():
+    # data length must be multiple of struct alignment (4) to survive trailing padding
+    original = TrailingBytesModel(header=7, data=b"\x01\x02\x03\x04")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert TrailingBytesModel.c_unpack(buf) == original
+
+
+def test_c_encoded_raw_bytes_empty_trailing():
+    payload = struct.pack("i", 0)
+    result = TrailingBytesModel.c_unpack(BytesIO(payload))
+    assert result.header == 0
+    assert result.data == b""
+
+
+def test_c_encoded_custom_encoder():
+    """CEncoded with custom fixed-size encoder that doubles an int on pack and halves on unpack."""
+
+    def make_encoder(endian: str, size: str) -> CEncoderSchema[int]:
+        prefix = {"native": "@", "little": "<", "big": ">"}[endian]
+        fmt = struct.Struct(f"{prefix}i")
+        return CEncoderSchema[int](
+            type="encoder",
+            alignment=fmt.size,
+            size=fmt.size,
+            unpack=lambda buf: fmt.unpack(buf.read(fmt.size))[0] // 2,
+            pack=lambda buf, v: buf.write(fmt.pack(v * 2)),
+            schema_equality_info=("test", "doubler"),
+        )
+
+    class DoublerModel(CModel):
+        value: An[int, CEncoded(get_encoder=make_encoder)]
+
+    buf = BytesIO()
+    DoublerModel(value=5).c_pack(buf)
+    # packed value should be 10 (doubled)
+    assert struct.unpack("i", buf.getvalue())[0] == 10
+
+    buf.seek(0)
+    result = DoublerModel.c_unpack(buf)
+    # unpacked value should be halved back to 5
+    assert result.value == 5
+
+
+def test_c_encoded_receives_endian_and_size_type():
+    """Verify encoder factory receives struct's endian_type and size_type."""
+    captured = {}
+
+    def capturing_encoder(endian: str, size: str) -> CEncoderSchema[int]:
+        captured["endian"] = endian
+        captured["size"] = size
+        fmt = struct.Struct("<i")
+        return CEncoderSchema[int](
+            type="encoder",
+            alignment=4,
+            size=4,
+            unpack=lambda buf: fmt.unpack(buf.read(4))[0],
+            pack=lambda buf, v: buf.write(fmt.pack(v)),
+            schema_equality_info=("test", "capture"),
+        )
+
+    class CaptureModel(CModel, c_endian_type="big", c_size_type="standard"):
+        val: An[int, CEncoded(get_encoder=capturing_encoder)]
+
+    assert captured["endian"] == "big"
+    assert captured["size"] == "standard"
+
+
+class MixedAlignmentModel(CModel):
+    """double(8) + signed_char(1) + int(4) — tests per-field alignment padding."""
+
+    d: Double
+    c: SignedChar
+    i: Int
+
+
+def test_mixed_alignment_matches_c_struct():
+    """CModel layout must match C struct layout for fields with different alignments."""
+    expected = struct.pack("@dbi", 1.5, 97, 42)
+    buf = BytesIO()
+    MixedAlignmentModel(d=1.5, c=97, i=42).c_pack(buf)
+    assert buf.getvalue() == expected
+
+
+def test_mixed_alignment_unpack():
+    data = struct.pack("@dbi", 1.5, 97, 42)
+    result = MixedAlignmentModel.c_unpack(BytesIO(data))
+    assert result.d == 1.5  # noqa: RUF069
+    assert result.c == 97
+    assert result.i == 42
+
+
+def test_mixed_alignment_roundtrip():
+    original = MixedAlignmentModel(d=1.5, c=97, i=42)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert MixedAlignmentModel.c_unpack(buf) == original
+
+
+class ShortDoubleModel(CModel):
+    """short(2) + double(8) — double needs 8-byte alignment after a 2-byte field."""
+
+    s: Short
+    d: Double
+
+
+def test_short_double_matches_c_struct():
+    expected = struct.pack("@hd", 5, 1.23)
+    buf = BytesIO()
+    ShortDoubleModel(s=5, d=1.23).c_pack(buf)
+    assert buf.getvalue() == expected
+
+
+def test_short_double_roundtrip():
+    original = ShortDoubleModel(s=5, d=1.23)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert ShortDoubleModel.c_unpack(buf) == original
+
+
+class InnerMixed(CModel):
+    """char(1) + double(8) — inner struct has 8-byte alignment."""
+
+    c: SignedChar
+    d: Double
+
+
+class OuterMixed(CModel):
+    """short(2) + InnerMixed(align 8) + int(4) — nested struct forces alignment gaps."""
+
+    s: Short
+    inner: InnerMixed
+    i: Int
+
+
+class _CInnerMixed(ctypes.Structure):
+    _fields_ = [("c", ctypes.c_byte), ("d", ctypes.c_double)]
+
+
+class _COuterMixed(ctypes.Structure):
+    _fields_ = [("s", ctypes.c_short), ("inner", _CInnerMixed), ("i", ctypes.c_int)]
+
+
+def test_nested_mixed_alignment_matches_c_struct():
+    c_outer = bytes(_COuterMixed(s=5, inner=_CInnerMixed(c=97, d=math.pi), i=42))
+    buf = BytesIO()
+    OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42).c_pack(buf)
+    assert buf.getvalue() == c_outer
+
+
+def test_nested_mixed_alignment_unpack():
+    buf = BytesIO()
+    original = OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42)
+    original.c_pack(buf)
+    buf.seek(0)
+    result = OuterMixed.c_unpack(buf)
+    assert result.s == 5
+    assert result.inner.c == 97
+    assert result.inner.d == pytest.approx(math.pi)
+    assert result.i == 42
+
+
+def test_nested_mixed_alignment_roundtrip():
+    original = OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert OuterMixed.c_unpack(buf) == original

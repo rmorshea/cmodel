@@ -12,6 +12,7 @@ nav:
       - Control alignment and layout: guides/control-alignment-and-layout.md
       - Model tagged unions: guides/model-tagged-unions.md
       - Define custom field formats: guides/define-custom-field-formats.md
+      - Define custom field encoders: guides/define-custom-field-encoders.md
   - Details: details.md
   - Reference: reference/
   - Changelog: changelog.md
