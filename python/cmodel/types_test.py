@@ -11,12 +11,16 @@ from cmodel.types import Double
 from cmodel.types import Float
 from cmodel.types import Int
 from cmodel.types import Long
+from cmodel.types import LongLong
 from cmodel.types import RawBytes
 from cmodel.types import Short
 from cmodel.types import SignedChar
+from cmodel.types import SizeT
+from cmodel.types import SSizeT
 from cmodel.types import UnsignedChar
 from cmodel.types import UnsignedInt
 from cmodel.types import UnsignedLong
+from cmodel.types import UnsignedLongLong
 from cmodel.types import UnsignedShort
 from cmodel.types import Uuid
 from cmodel.types import c_bool
@@ -62,6 +66,22 @@ class _UnsignedLongModel(CModel):
     field: UnsignedLong
 
 
+class _LongLongModel(CModel):
+    field: LongLong
+
+
+class _UnsignedLongLongModel(CModel):
+    field: UnsignedLongLong
+
+
+class _SSizeTModel(CModel):
+    field: SSizeT
+
+
+class _SizeTModel(CModel):
+    field: SizeT
+
+
 class _FloatModel(CModel):
     field: Float
 
@@ -86,6 +106,12 @@ class _DoubleModel(CModel):
         (_UnsignedIntModel, "I", 100_000),
         (_LongModel, "l", 100_000),
         (_UnsignedLongModel, "L", 100_000),
+        (_LongLongModel, "q", 100_000),
+        (_LongLongModel, "q", -100_000),
+        (_UnsignedLongLongModel, "Q", 100_000),
+        (_SSizeTModel, "n", 100_000),
+        (_SSizeTModel, "n", -100_000),
+        (_SizeTModel, "N", 100_000),
         (_FloatModel, "f", 1.5),
         (_DoubleModel, "d", 1.5),
     ],
@@ -108,6 +134,10 @@ def test_scalar_unpack(model_cls, fmt_char, value):
         (_UnsignedIntModel, "I", 100_000),
         (_LongModel, "l", 100_000),
         (_UnsignedLongModel, "L", 100_000),
+        (_LongLongModel, "q", 100_000),
+        (_UnsignedLongLongModel, "Q", 100_000),
+        (_SSizeTModel, "n", 100_000),
+        (_SizeTModel, "N", 100_000),
         (_FloatModel, "f", 1.5),
         (_DoubleModel, "d", 1.5),
     ],
