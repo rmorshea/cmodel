@@ -2,10 +2,10 @@ from collections.abc import Collection
 from struct import calcsize
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Literal
 from typing import TypedDict
 from typing import get_args
 
-from copier import Literal
 from pydantic_core import core_schema as cs
 
 if TYPE_CHECKING:
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from cmodel.schema import SizeType
 
 
-type Prefix = Literal["@", "=", "<", ">", "!"]  # noqa: F722
+type Prefix = Literal["@", "=", "<", ">", "!"]
 """A type for valid struct format string prefixes."""
 PREFIXES = set(get_args(Prefix))
 """A set of valid struct format string prefixes."""
