@@ -546,8 +546,6 @@ def test_nested_mixed_alignment_matches_c_struct():
     # C equivalent:
     #   struct Inner { char c; double d; };     // size 16, align 8
     #   struct Outer { short s; Inner inner; int i; }; // s(2) pad(6) Inner(16) i(4) pad(4) = 32
-    expected = struct.pack("@h", 5) + struct.pack("@bd", 97, math.pi) + struct.pack("@i", 42)
-    # But C also pads *between* s and Inner to Inner's alignment, and trailing to struct align.
     # Use struct module to get the real C layout:
     c_inner = struct.pack("@bd", 97, math.pi)
     c_outer = struct.pack("@h", 5)
