@@ -1,3 +1,4 @@
+import ctypes
 import math
 import struct
 from io import BytesIO
@@ -542,24 +543,16 @@ class OuterMixed(CModel):
     i: Int
 
 
-def test_nested_mixed_alignment_matches_c_struct():
-    # C equivalent:
-    #   struct Inner { char c; double d; };     // size 16, align 8
-    #   struct Outer { short s; Inner inner; int i; }; // s(2) pad(6) Inner(16) i(4) pad(4) = 32
-    # Use struct module to get the real C layout:
-    c_inner = struct.pack("@bd", 97, math.pi)
-    c_outer = struct.pack("@h", 5)
-    # pad to Inner alignment (8)
-    inner_align = struct.calcsize("@d")  # 8
-    pad_after_s = (inner_align - len(c_outer) % inner_align) % inner_align
-    c_outer += b"\x00" * pad_after_s + c_inner
-    # pad to int alignment (4) — already aligned
-    c_outer += struct.pack("@i", 42)
-    # trailing pad to struct alignment (8)
-    struct_align = inner_align
-    trail = (struct_align - len(c_outer) % struct_align) % struct_align
-    c_outer += b"\x00" * trail
+class _CInnerMixed(ctypes.Structure):
+    _fields_ = [("c", ctypes.c_byte), ("d", ctypes.c_double)]
 
+
+class _COuterMixed(ctypes.Structure):
+    _fields_ = [("s", ctypes.c_short), ("inner", _CInnerMixed), ("i", ctypes.c_int)]
+
+
+def test_nested_mixed_alignment_matches_c_struct():
+    c_outer = bytes(_COuterMixed(s=5, inner=_CInnerMixed(c=97, d=math.pi), i=42))
     buf = BytesIO()
     OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42).c_pack(buf)
     assert buf.getvalue() == c_outer
