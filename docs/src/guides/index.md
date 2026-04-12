@@ -39,12 +39,23 @@ blurring the boundary between field format and struct layout.
 Read this page when the structure is straightforward but one or two fields need a more
 specialized binary representation.
 
+### [Define custom field encoders](define-custom-field-encoders.md)
+
+Use this guide when a field needs custom or variable-length binary encoding that cannot
+be expressed as a `struct` format string. It shows how to define a
+[`CEncoded`][cmodel.base.CEncoded] annotation with your own pack and unpack functions,
+and when to prefer it over [`CFormat`][cmodel.base.CFormat].
+
+Read this page when you need full control over how a field is read from and written to
+a binary buffer.
+
 ## Reading path
 
 - New to CModel: read these guides in order.
 - Working from an existing C declaration: start with [Model common structs](model-common-structs.md), then jump to [Control alignment and layout](control-alignment-and-layout.md).
 - Working with a type-tagged protocol: go to [Model tagged unions](model-tagged-unions.md).
 - Working with unusual field encodings: go straight to [Define custom field formats](define-custom-field-formats.md).
+- Working with custom binary encodings: go to [Define custom field encoders](define-custom-field-encoders.md).
 
 If you are new to CModel, read these guides in order. If you already have a C struct or
 wire format in hand, jump directly to the guide that matches the layout problem you are
