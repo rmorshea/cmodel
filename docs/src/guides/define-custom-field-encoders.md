@@ -85,14 +85,14 @@ outside what `struct` can express, [`CFormat`][cmodel.base.CFormat] cannot descr
 The [`CEncoderSchema`][cmodel.schema.CEncoderSchema] dict returned by `get_encoder`
 has the following keys:
 
-| Key | Type | Purpose |
-|---|---|---|
-| `type` | `"encoder"` | Must always be `"encoder"`. |
-| `size` | `int \| None` | Byte size of the encoded value, or `None` for variable length. |
-| `alignment` | `int` | Alignment requirement in bytes. |
-| `unpack` | `(BytesIO) -> T` | Read the value from a buffer. |
-| `pack` | `(BytesIO, T) -> Any` | Write the value to a buffer. |
-| `schema_equality_info` | `Hashable` | Used to compare two schemas for equality. |
+| Key                    | Type                  | Purpose                                                        |
+| ---------------------- | --------------------- | -------------------------------------------------------------- |
+| `type`                 | `"encoder"`           | Must always be `"encoder"`.                                    |
+| `size`                 | `int \| None`         | Byte size of the encoded value, or `None` for variable length. |
+| `alignment`            | `int`                 | Alignment requirement in bytes.                                |
+| `unpack`               | `(BytesIO) -> T`      | Read the value from a buffer.                                  |
+| `pack`                 | `(BytesIO, T) -> Any` | Write the value to a buffer.                                   |
+| `schema_equality_info` | `Hashable`            | Used to compare two schemas for equality.                      |
 
 Set `size` to `None` for variable-length fields. A variable-length field should
 generally be the last field in a struct, since its `unpack` function may read to the end
