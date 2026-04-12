@@ -35,12 +35,10 @@ class CEncoderSchema[T](TypedDict):
 
     type: Literal["encoder"]
 
-    size: int
-    """The size of this value in bytes."""
+    size: int | None
+    """The size of this value in bytes - None if variable length."""
     alignment: int
     """The alignment requirement of this value in bytes."""
-    variable_length: bool
-    """Whether this value consumes the rest of the buffer when unpacking."""
     unpack: Callable[[BytesIO], T]
     """A function to read this value from a binary buffer."""
     pack: Callable[[BytesIO, T], Any]
@@ -123,6 +121,9 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
         case "tagged-union":
             tag_schema = schema["tag_schema"]
             tag_size = tag_schema["size"]
+            if tag_size is None:
+                msg = "Tag schema for tagged union must have a fixed size"
+                raise ValueError(msg)
             tag_value = unpack_c_schema(io, tag_schema)
             io.seek(io.tell() - tag_size, 0)  # rewind to the start of the tag field
             variant_schema = schema["variant_schemas"].get(tag_value)
@@ -192,7 +193,10 @@ def _visit(
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
     if metadata := _utils.get_pydantic_schema_metadata(py_schema):
-        context["field_schema"]["schema"] = _c_schema_from_pydantic_metadata(metadata, context)
+        c_schema = _encoder_schema_from_pydantic_metadata(metadata, context)
+        context["field_schema"]["schema"] = c_schema
+        if c_schema["size"] is None:
+            context["field_schema"]["variable_length"] = True
         return
     match py_schema["type"]:
         case "model":
@@ -421,7 +425,7 @@ def _simple_format_schema(fmt: str, context: _VisitorContext) -> CEncoderSchema:
     )
 
 
-def _c_schema_from_pydantic_metadata(
+def _encoder_schema_from_pydantic_metadata(
     metadata: _utils.PydanticSchemaMetadata, context: _VisitorContext
 ) -> CEncoderSchema:
     """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
@@ -458,7 +462,6 @@ def _encoder_schema_from_c_format(
         type="encoder",
         size=fmt_size,
         alignment=_utils.get_format_alignment(prefix, c_format.format),
-        variable_length=False,
         unpack=lambda io: c_format.validate(fmt_unpack(io.read(fmt_size))),
         pack=lambda io, value: io.write(fmt_pack(*c_format.dump(value))),
         schema_equality_info=(prefix, c_format.format),

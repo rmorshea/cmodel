@@ -5,7 +5,9 @@ from collections.abc import Callable
 from typing import Annotated as An
 from uuid import UUID
 
+from cmodel.base import CEncoded
 from cmodel.base import CFormat
+from cmodel.schema import CEncoderSchema
 
 
 def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFormat[T]]:
@@ -94,3 +96,23 @@ Uuid = An[UUID, c_uuid()]
 def c_char(count: int) -> CFormat:
     """Annotated metadata for a char array of the given length. Returns Python `bytes`."""
     return CFormat(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))
+
+
+RawBytes = An[
+    bytes,
+    CEncoded(
+        get_encoder=lambda e, s: CEncoderSchema[bytes](
+            type="encoder",
+            alignment=1,
+            size=None,
+            unpack=lambda buffer: buffer.read(),
+            pack=lambda buffer, value: buffer.write(value),
+            schema_equality_info=(__name__, "ByteArray"),
+        )
+    ),
+]
+"""Raw trailing bytes that consume all remaining data in the buffer.
+
+Should be the last field in a model, as it reads from the current
+position to the end of the buffer.
+"""

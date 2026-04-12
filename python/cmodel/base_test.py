@@ -243,7 +243,7 @@ def test_tagged_union_requires_matching_tag_field_schema():
         barks: Float
         trained: Bool
 
-    with pytest.raises(ValueError, match="same tag field schema"):
+    with pytest.raises(ValueError, match="same tag schema"):
 
         class _MismatchedEnvelope(CModel):
             pet: An[_ShortTaggedCat | _IntTaggedDog, Discriminator("pet_type")]
