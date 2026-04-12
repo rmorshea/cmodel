@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from collections.abc import Collection
 from struct import calcsize
 from typing import TYPE_CHECKING
@@ -10,8 +9,11 @@ from copier import Literal
 from pydantic_core import core_schema as cs
 
 if TYPE_CHECKING:
-    from cmodel.base import CModel
+    from cmodel.base import CEncoded
+    from cmodel.base import CFormat
     from cmodel.schema import CStructFieldSchema
+    from cmodel.schema import EndianType
+    from cmodel.schema import SizeType
 
 
 type Prefix = Literal["@", "=", "<", ">", "!"]  # noqa: F722
@@ -20,15 +22,13 @@ PREFIXES = set(get_args(Prefix))
 """A set of valid struct format string prefixes."""
 
 
-class PydanticSchemaMetadata[T](TypedDict):
+class PydanticSchemaMetadata[T](TypedDict, total=False):
     """Metadata for a Pydantic schema to control how it is converted to a CModel schema."""
 
-    format: str
-    """The format for this field compiled for each endian."""
-    validate: Callable[[tuple[Any, ...]], T]
-    """A function to convert the raw tuple produced by `struct.unpack` into a Python value."""
-    dump: Callable[[T], tuple[Any, ...]]
-    """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
+    c_encoded: "CEncoded[T]"
+    """The CEncoded metadata for this schema, if it exists."""
+    c_format: "CFormat[T]"
+    """The CFormat metadata for this schema, if it exists."""
 
 
 def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata | None:
@@ -67,9 +67,13 @@ def identity(x: Any) -> Any:
     return x
 
 
-def get_c_format_prefix(cls: type["CModel"]) -> Prefix:
+def get_c_format_prefix(
+    endian_type: "EndianType",
+    size_type: "SizeType",
+    error_msg: str,
+) -> Prefix:
     """Get the format prefix for the given endianness and size."""
-    match (cls.c_endian_type, cls.c_size_type):
+    match (endian_type, size_type):
         case ("native", "native"):
             return "@"
         case ("native", "standard"):
@@ -81,5 +85,5 @@ def get_c_format_prefix(cls: type["CModel"]) -> Prefix:
         case ("network", "standard"):
             return "!"
         case (e, s):
-            msg = f"Invalid combination of endian_type {e} and size_type {s} for {cls}."
+            msg = f"Invalid combination of endian_type {e} and size_type {s}{error_msg}"
             raise ValueError(msg)

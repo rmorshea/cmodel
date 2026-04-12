@@ -1,11 +1,13 @@
-import operator
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Mapping
 from io import BytesIO
+from operator import itemgetter
 from struct import Struct
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
+from typing import NotRequired
 from typing import TypedDict
 from typing import get_args
 from uuid import UUID
@@ -16,6 +18,9 @@ from pydantic_core import core_schema as cs
 import cmodel
 from cmodel import _utils
 
+if TYPE_CHECKING:
+    from cmodel.base import CModel
+
 CORE_SCHEMA_TYPES = get_args(cs.CoreSchemaType)
 
 
@@ -25,29 +30,23 @@ type SizeType = Literal["standard", "native"]
 """Whether to use standard sizes for C types or native sizes."""
 
 
-# We define this as a separate type in case, in the future we want a non-precompiled version
-# in the schema (perhaps to be transferable to other languages). This could be defined as a
-# union of this and a CFormatString type, for example. For now though, we only have and handle
-# the compiled version.
-class CFormatCompiled(TypedDict):
-    """A compiled C format."""
+class CEncoderSchema[T](TypedDict):
+    """An object that can pack and unpack a value to and from a binary buffer."""
 
-    compiled: Struct
+    type: Literal["encoder"]
 
-
-class CFormatSchema[T](TypedDict):
-    """A schema for a single field in a C struct."""
-
-    type: Literal["format"]
-
-    format: CFormatCompiled
-    """The format for this field compiled for each endian."""
+    size: int
+    """The size of this value in bytes."""
     alignment: int
-    """The alignment of this schema in bytes."""
-    validate: Callable[[tuple[Any, ...]], T]
-    """A function to convert the raw tuple produced by `struct.unpack` into a Python value."""
-    dump: Callable[[T], tuple[Any, ...]]
-    """A function to convert a Python value into a tuple that can be passed to `struct.pack`."""
+    """The alignment requirement of this value in bytes."""
+    variable_length: bool
+    """Whether this value consumes the rest of the buffer when unpacking."""
+    unpack: Callable[[BytesIO], T]
+    """A function to read this value from a binary buffer."""
+    pack: Callable[[BytesIO, T], Any]
+    """A function to write this value to a binary buffer."""
+    schema_equality_info: Hashable
+    """A value used to determine if two CEncoderSchemas are equal."""
 
 
 class CStructFieldSchema(TypedDict):
@@ -70,7 +69,7 @@ class CTaggedUnionSchema(TypedDict):
     """The alignment of this union in bytes computed as the max alignment of its variants."""
     tag_field: str
     """The name of the field that serves as the tag for this union."""
-    tag_schema: CFormatSchema
+    tag_schema: CEncoderSchema
     """The schema for the tag field that determines which variant of the union is active."""
     variant_schemas: dict[Any, "CSchema"]
     """A mapping of tag values to the schemas for each variant of the union."""
@@ -85,24 +84,25 @@ class CStructSchema(TypedDict):
     """The inner schemas for each field in the struct, keyed by field name."""
     alignment: int
     """The alignment of this struct in bytes computed as the max alignment of its fields."""
-    prefix: _utils.Prefix
-    """The format prefix to use for this struct, determined by the endianness and size"""
+    size_type: SizeType
+    """Whether to use standard sizes for C types or native sizes."""
+    endian_type: EndianType
+    """The endianness of this struct, which determines the format prefix for its fields."""
     anonymous: bool
     """Anonymous structs become tuples instead of dicts when unpacked."""
+    cls: NotRequired["type[CModel]"]
+    """The CModel class that this schema corresponds to."""
 
 
-CSchema = CStructSchema | CFormatSchema | CTaggedUnionSchema
+CSchema = CStructSchema | CEncoderSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
 def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
     """Unpack a C struct from a buffer according to the provided schema."""
     match schema["type"]:
-        case "format":
-            fmt = schema["format"]["compiled"]
-            raw_value = fmt.unpack_from(io.getbuffer(), io.tell())
-            io.seek(fmt.size, 1)
-            return schema["validate"](raw_value)
+        case "encoder":
+            return schema["unpack"](io)
         case "struct":
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
@@ -122,7 +122,7 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
                 return dict_values
         case "tagged-union":
             tag_schema = schema["tag_schema"]
-            tag_size = tag_schema["format"]["compiled"].size
+            tag_size = tag_schema["size"]
             tag_value = unpack_c_schema(io, tag_schema)
             io.seek(io.tell() - tag_size, 0)  # rewind to the start of the tag field
             variant_schema = schema["variant_schemas"].get(tag_value)
@@ -138,9 +138,8 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
 def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
     """Pack a value into a buffer according to the provided C schema."""
     match schema["type"]:
-        case "format":
-            args = schema["dump"](value)
-            io.write(schema["format"]["compiled"].pack(*args))
+        case "encoder":
+            schema["pack"](io, value)
         case "struct":
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
@@ -193,7 +192,7 @@ def _visit(
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
     if metadata := _utils.get_pydantic_schema_metadata(py_schema):
-        context["field_schema"]["schema"] = _format_schema_from_pydantic_metadata(context, metadata)
+        context["field_schema"]["schema"] = _c_schema_from_pydantic_metadata(metadata, context)
         return
     match py_schema["type"]:
         case "model":
@@ -217,7 +216,8 @@ def _visit(
             c_schema = _simple_format_schema("s", context)
             context["field_schema"]["schema"] = c_schema
         case "uuid":
-            _visit_uuid(py_schema, handler, context)
+            c_schema = _make_uuid_schema(context)
+            context["field_schema"]["schema"] = c_schema
         case "definition-ref":
             # TODO: use a similar ref schema mechanism that Pydantic does - if we've seen the
             # reference ID we should be able to reuse the same CSchema object.
@@ -242,7 +242,9 @@ def _visit_model(
         type="struct",
         field_schemas={},
         alignment=cls.c_alignment,
-        prefix=_utils.get_c_format_prefix(cls),
+        endian_type=cls.c_endian_type,
+        size_type=cls.c_size_type,
+        cls=cls,
         anonymous=False,
     )
 
@@ -295,7 +297,8 @@ def _visit_tuple(
         type="struct",
         field_schemas={},
         alignment=0,  # placeholder
-        prefix=context["struct_schema"]["prefix"],
+        size_type=context["struct_schema"]["size_type"],
+        endian_type=context["struct_schema"]["endian_type"],
         anonymous=True,
     )
 
@@ -347,31 +350,32 @@ def _visit_tagged_union(
     # Now we can build the tagged union schema using the captured choice schemas.
     c_choices = {k: v["schema"] for k, v in c_choice_fields.items()}
 
-    tag_schemas: list[CSchema] = []
+    tag_schemas: list[CEncoderSchema] = []
     for c_schema in c_choices.values():
         match c_schema["type"]:
             case "struct":
                 if c_schema["anonymous"]:
+                    # This is because we need to know the name of the tag field to find.
                     msg = f"Tagged union variants cannot be anonymous structs, got {c_schema}"
                     raise ValueError(msg)
-                tag_schemas.append(c_schema["field_schemas"][tag_field]["schema"])
+                maybe_tag_schema = c_schema["field_schemas"][tag_field]["schema"]
+                if maybe_tag_schema["type"] != "encoder":
+                    msg = (
+                        f"Tag field {tag_field} in tagged union variants "
+                        f"must be CEncoded, got {maybe_tag_schema}"
+                    )
+                    raise TypeError(msg)
+                tag_schemas.append(maybe_tag_schema)
 
     if not tag_schemas:
         msg = f"Tagged union variants must include discriminator field {tag_field}"
         raise ValueError(msg)
 
     tag_schema = tag_schemas[0]
-    if tag_schema["type"] != "format":
-        msg = f"Tag field {tag_field} must be a simple format field, got {tag_schema['type']}"
-        raise TypeError(msg)
-
-    for next_t_schema in tag_schemas[1:]:
-        if not _format_schemas_equal(tag_schema, next_t_schema):
-            msg = (
-                f"All variants of a tagged union must have the same tag field schema, "
-                f"got {tag_schema} and {next_t_schema}"
-            )
-            raise ValueError(msg)
+    tag_schema_equality_infos = {tag_schema["schema_equality_info"] for tag_schema in tag_schemas}
+    if len(tag_schema_equality_infos) != 1:
+        msg = f"All variants of a tagged union must have the same tag schema, got {tag_schemas}"
+        raise ValueError(msg)
 
     context["field_schema"]["schema"] = CTaggedUnionSchema(
         type="tagged-union",
@@ -382,20 +386,15 @@ def _visit_tagged_union(
     )
 
 
-def _visit_uuid(
-    py_schema: cs.UuidSchema,  # noqa: ARG001
-    handler: GetCoreSchemaHandler,  # noqa: ARG001
-    context: _VisitorContext,
-) -> None:
-    compiled = Struct(context["struct_schema"]["prefix"] + "16s")
-    c_schema = CFormatSchema(
-        type="format",
-        format={"compiled": compiled},
-        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], "s"),
-        validate=lambda x: UUID(bytes=x[0]),
-        dump=lambda x: (x.bytes,),
+def _make_uuid_schema(context: _VisitorContext) -> CEncoderSchema:
+    return _encoder_schema_from_c_format(
+        cmodel.CFormat(
+            format="16s",
+            validate=lambda x: UUID(bytes=x[0]),
+            dump=lambda x: (x.bytes,),
+        ),
+        context,
     )
-    context["field_schema"]["schema"] = c_schema
 
 
 def _check_c_struct_schema(
@@ -410,51 +409,75 @@ def _check_c_struct_schema(
             field_schema["variable_length"] = True
 
 
-def _simple_format_schema(fmt: str, context: _VisitorContext) -> CFormatSchema:
-    """Return a CFormatSchema from a format string without special validate or dump functions."""
-    compiled = Struct(context["struct_schema"]["prefix"] + fmt)
-    return CFormatSchema(
-        type="format",
-        format={"compiled": compiled},
-        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
-        validate=operator.itemgetter(0),
-        dump=lambda x: (x,),
+def _simple_format_schema(fmt: str, context: _VisitorContext) -> CEncoderSchema:
+    """Return a CEncoderSchema for a simple scalar type represented as a struct format string."""
+    return _encoder_schema_from_c_format(
+        cmodel.CFormat(
+            format=fmt,
+            validate=itemgetter(0),
+            dump=lambda x: (x,),
+        ),
+        context,
     )
 
 
-def _format_schemas_equal(left: CFormatSchema, right: CSchema) -> bool:
-    return (
-        right["type"] == "format"
-        and left["format"]["compiled"].format == right["format"]["compiled"].format
-        and left["alignment"] == right["alignment"]
-    )
-
-
-def _format_schema_from_pydantic_metadata(
-    context: _VisitorContext, metadata: _utils.PydanticSchemaMetadata
-) -> CFormatSchema:
+def _c_schema_from_pydantic_metadata(
+    metadata: _utils.PydanticSchemaMetadata, context: _VisitorContext
+) -> CEncoderSchema:
     """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
-    fmt = metadata["format"]
-    return CFormatSchema(
-        type="format",
-        format={"compiled": Struct(context["struct_schema"]["prefix"] + fmt)},
-        alignment=_utils.get_format_alignment(context["struct_schema"]["prefix"], fmt),
-        validate=metadata["validate"],
-        dump=metadata["dump"],
+    match metadata:
+        case {"c_encoded": c_encoded}:
+            struct_schema = context["struct_schema"]
+            return c_encoded.get_encoder(struct_schema["endian_type"], struct_schema["size_type"])
+        case {"c_format": c_format}:
+            return _encoder_schema_from_c_format(c_format, context)
+        case _:
+            msg = f"Unsupported CModel metadata: {metadata}"
+            raise TypeError(msg)
+
+
+def _encoder_schema_from_c_format(
+    c_format: "cmodel.CFormat",
+    context: _VisitorContext,
+) -> CEncoderSchema:
+    """Convert a CFormat to a CEncoderSchema using the provided endianness and size type."""
+    struct_schema = context["struct_schema"]
+    prefix = _utils.get_c_format_prefix(
+        struct_schema["endian_type"],
+        struct_schema["size_type"],
+        error_msg=f" for {cls}" if (cls := struct_schema.get("cls")) else "",
+    )
+
+    compiled_fmt = Struct(prefix + c_format.format)
+    # create aliases to avoid attribute access cost in pack/unpack functions
+    fmt_pack = compiled_fmt.pack
+    fmt_unpack = compiled_fmt.unpack
+    fmt_size = compiled_fmt.size
+
+    return CEncoderSchema(
+        type="encoder",
+        size=fmt_size,
+        alignment=_utils.get_format_alignment(prefix, c_format.format),
+        variable_length=False,
+        unpack=lambda io: c_format.validate(fmt_unpack(io.read(fmt_size))),
+        pack=lambda io, value: io.write(fmt_pack(*c_format.dump(value))),
+        schema_equality_info=(prefix, c_format.format),
     )
 
 
 def _placeholder_struct_schema(
     *,
     anonymous: bool = False,
-    prefix: _utils.Prefix = "@",
+    endian_type: EndianType = "native",
+    size_type: SizeType = "native",
 ) -> CStructSchema:
     """Return a placeholder CStructSchema that can be used to build up a CStructSchema."""
     return CStructSchema(
         type="struct",
         field_schemas={},
         alignment=0,  # placeholder
-        prefix=prefix,
+        endian_type=endian_type,
+        size_type=size_type,
         anonymous=anonymous,
     )
 

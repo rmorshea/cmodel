@@ -14,6 +14,7 @@ from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
+from cmodel.schema import CEncoderSchema
 from cmodel.schema import CStructSchema
 from cmodel.schema import EndianType
 from cmodel.schema import SizeType
@@ -89,14 +90,7 @@ class CModel(BaseModel):
 
 @dataclass
 class CFormat[T]:
-    """Binary format metadata for a field declared with `typing.Annotated`.
-
-    `format` is a `struct`-style format string for the field itself. Optional
-    `validate` and `dump` callables adapt between the raw tuple produced by `struct`
-    operations and the Python value stored on the model. Attach it to a field with
-    `Annotated[..., CFormat(...)]`, or use helpers from [`cmodel.types`][cmodel.types]
-    for the common scalar cases.
-    """
+    """Pydantic annotated metadata declaring the C format for to pack/unpack a value."""
 
     format: str
     validate: Callable[[tuple[Any, ...]], T] = lambda x: x  # pyright: ignore[reportAssignmentType]
@@ -123,12 +117,22 @@ class CFormat[T]:
         handler: GetCoreSchemaHandler,
     ) -> cs.CoreSchema:
         schema = handler(source)
-        _utils.set_pydantic_schema_metadata(
-            schema,
-            {
-                "format": self.format,
-                "validate": self.validate,
-                "dump": self.dump,
-            },
-        )
+        _utils.set_pydantic_schema_metadata(schema, {"c_format": self})
+        return schema
+
+
+@dataclass
+class CEncoded[T]:
+    """Pydantic annotated metadata declaring how to pack/unpack a value from a C encoded buffer."""
+
+    get_encoder: Callable[[EndianType, SizeType], CEncoderSchema[T]]
+    """A function that produces a CEncoder for this value given an endianness and size type."""
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> cs.CoreSchema:
+        schema = handler(source)
+        _utils.set_pydantic_schema_metadata(schema, {"c_encoded": self})
         return schema
