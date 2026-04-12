@@ -11,6 +11,7 @@ from cmodel.types import Double
 from cmodel.types import Float
 from cmodel.types import Int
 from cmodel.types import Long
+from cmodel.types import RawBytes
 from cmodel.types import Short
 from cmodel.types import SignedChar
 from cmodel.types import UnsignedChar
@@ -214,3 +215,31 @@ def test_uuid_roundtrip(sample_uuid):
     original.c_pack(buf)
     buf.seek(0)
     assert _UuidModel.c_unpack(buf) == original
+
+
+class _RawBytesModel(CModel):
+    length: Int
+    data: RawBytes
+
+
+def test_raw_bytes_unpack():
+    buf = BytesIO(struct.pack("i", 11) + b"hello world")
+    result = _RawBytesModel.c_unpack(buf)
+    assert result.length == 11
+    assert result.data == b"hello world"
+
+
+def test_raw_bytes_pack():
+    buf = BytesIO()
+    _RawBytesModel(length=11, data=b"hello world").c_pack(buf)
+    packed = buf.getvalue()
+    assert packed[:4] == struct.pack("i", 11)
+    assert packed[4:15] == b"hello world"
+
+
+def test_raw_bytes_roundtrip():
+    original = _RawBytesModel(length=4, data=b"\x00\x01\x02\xff")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _RawBytesModel.c_unpack(buf) == original
