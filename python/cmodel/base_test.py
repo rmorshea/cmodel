@@ -376,3 +376,96 @@ def test_endian_type_overridden_by_subclass():
     buf = BytesIO()
     Child(x=1, y=2).c_pack(buf)
     assert buf.getvalue() == struct.pack("<ii", 1, 2)
+
+
+from cmodel.base import CEncoded
+from cmodel.schema import CEncoderSchema
+from cmodel.types import RawBytes
+
+
+class TrailingBytesModel(CModel):
+    header: Int
+    data: RawBytes
+
+
+def test_c_encoded_raw_bytes_unpack():
+    payload = struct.pack("i", 42) + b"\xde\xad\xbe\xef"
+    result = TrailingBytesModel.c_unpack(BytesIO(payload))
+    assert result.header == 42
+    assert result.data == b"\xde\xad\xbe\xef"
+
+
+def test_c_encoded_raw_bytes_pack():
+    model = TrailingBytesModel(header=42, data=b"\xde\xad\xbe\xef")
+    buf = BytesIO()
+    model.c_pack(buf)
+    assert buf.getvalue() == struct.pack("i", 42) + b"\xde\xad\xbe\xef"
+
+
+def test_c_encoded_raw_bytes_roundtrip():
+    # data length must be multiple of struct alignment (4) to survive trailing padding
+    original = TrailingBytesModel(header=7, data=b"\x01\x02\x03\x04")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert TrailingBytesModel.c_unpack(buf) == original
+
+
+def test_c_encoded_raw_bytes_empty_trailing():
+    payload = struct.pack("i", 0)
+    result = TrailingBytesModel.c_unpack(BytesIO(payload))
+    assert result.header == 0
+    assert result.data == b""
+
+
+def test_c_encoded_custom_encoder():
+    """CEncoded with custom fixed-size encoder that doubles an int on pack and halves on unpack."""
+
+    def make_encoder(endian: str, size: str) -> CEncoderSchema[int]:
+        prefix = {"native": "@", "little": "<", "big": ">"}[endian]
+        fmt = struct.Struct(f"{prefix}i")
+        return CEncoderSchema[int](
+            type="encoder",
+            alignment=fmt.size,
+            size=fmt.size,
+            unpack=lambda buf: fmt.unpack(buf.read(fmt.size))[0] // 2,
+            pack=lambda buf, v: buf.write(fmt.pack(v * 2)),
+            schema_equality_info=("test", "doubler"),
+        )
+
+    class DoublerModel(CModel):
+        value: An[int, CEncoded(get_encoder=make_encoder)]
+
+    buf = BytesIO()
+    DoublerModel(value=5).c_pack(buf)
+    # packed value should be 10 (doubled)
+    assert struct.unpack("i", buf.getvalue())[0] == 10
+
+    buf.seek(0)
+    result = DoublerModel.c_unpack(buf)
+    # unpacked value should be halved back to 5
+    assert result.value == 5
+
+
+def test_c_encoded_receives_endian_and_size_type():
+    """Verify encoder factory receives struct's endian_type and size_type."""
+    captured = {}
+
+    def capturing_encoder(endian: str, size: str) -> CEncoderSchema[int]:
+        captured["endian"] = endian
+        captured["size"] = size
+        fmt = struct.Struct("<i")
+        return CEncoderSchema[int](
+            type="encoder",
+            alignment=4,
+            size=4,
+            unpack=lambda buf: fmt.unpack(buf.read(4))[0],
+            pack=lambda buf, v: buf.write(fmt.pack(v)),
+            schema_equality_info=("test", "capture"),
+        )
+
+    class CaptureModel(CModel, c_endian_type="big", c_size_type="standard"):
+        val: An[int, CEncoded(get_encoder=capturing_encoder)]
+
+    assert captured["endian"] == "big"
+    assert captured["size"] == "standard"
