@@ -1,3 +1,4 @@
+import math
 import struct
 from io import BytesIO
 from typing import Annotated as An
@@ -6,10 +7,16 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
+from cmodel.base import CEncoded
 from cmodel.base import CModel
+from cmodel.schema import CEncoderSchema
 from cmodel.types import Bool
+from cmodel.types import Double
 from cmodel.types import Float
 from cmodel.types import Int
+from cmodel.types import RawBytes
+from cmodel.types import Short
+from cmodel.types import SignedChar
 from cmodel.types import c_int
 from cmodel.types import c_short
 
@@ -378,11 +385,6 @@ def test_endian_type_overridden_by_subclass():
     assert buf.getvalue() == struct.pack("<ii", 1, 2)
 
 
-from cmodel.base import CEncoded
-from cmodel.schema import CEncoderSchema
-from cmodel.types import RawBytes
-
-
 class TrailingBytesModel(CModel):
     header: Int
     data: RawBytes
@@ -469,3 +471,117 @@ def test_c_encoded_receives_endian_and_size_type():
 
     assert captured["endian"] == "big"
     assert captured["size"] == "standard"
+
+
+class MixedAlignmentModel(CModel):
+    """double(8) + signed_char(1) + int(4) — tests per-field alignment padding."""
+
+    d: Double
+    c: SignedChar
+    i: Int
+
+
+def test_mixed_alignment_matches_c_struct():
+    """CModel layout must match C struct layout for fields with different alignments."""
+    expected = struct.pack("@dbi", 1.5, 97, 42)
+    buf = BytesIO()
+    MixedAlignmentModel(d=1.5, c=97, i=42).c_pack(buf)
+    assert buf.getvalue() == expected
+
+
+def test_mixed_alignment_unpack():
+    data = struct.pack("@dbi", 1.5, 97, 42)
+    result = MixedAlignmentModel.c_unpack(BytesIO(data))
+    assert result.d == 1.5  # noqa: RUF069
+    assert result.c == 97
+    assert result.i == 42
+
+
+def test_mixed_alignment_roundtrip():
+    original = MixedAlignmentModel(d=1.5, c=97, i=42)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert MixedAlignmentModel.c_unpack(buf) == original
+
+
+class ShortDoubleModel(CModel):
+    """short(2) + double(8) — double needs 8-byte alignment after a 2-byte field."""
+
+    s: Short
+    d: Double
+
+
+def test_short_double_matches_c_struct():
+    expected = struct.pack("@hd", 5, 1.23)
+    buf = BytesIO()
+    ShortDoubleModel(s=5, d=1.23).c_pack(buf)
+    assert buf.getvalue() == expected
+
+
+def test_short_double_roundtrip():
+    original = ShortDoubleModel(s=5, d=1.23)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert ShortDoubleModel.c_unpack(buf) == original
+
+
+class InnerMixed(CModel):
+    """char(1) + double(8) — inner struct has 8-byte alignment."""
+
+    c: SignedChar
+    d: Double
+
+
+class OuterMixed(CModel):
+    """short(2) + InnerMixed(align 8) + int(4) — nested struct forces alignment gaps."""
+
+    s: Short
+    inner: InnerMixed
+    i: Int
+
+
+def test_nested_mixed_alignment_matches_c_struct():
+    # C equivalent:
+    #   struct Inner { char c; double d; };     // size 16, align 8
+    #   struct Outer { short s; Inner inner; int i; }; // s(2) pad(6) Inner(16) i(4) pad(4) = 32
+    expected = struct.pack("@h", 5) + struct.pack("@bd", 97, math.pi) + struct.pack("@i", 42)
+    # But C also pads *between* s and Inner to Inner's alignment, and trailing to struct align.
+    # Use struct module to get the real C layout:
+    c_inner = struct.pack("@bd", 97, math.pi)
+    c_outer = struct.pack("@h", 5)
+    # pad to Inner alignment (8)
+    inner_align = struct.calcsize("@d")  # 8
+    pad_after_s = (inner_align - len(c_outer) % inner_align) % inner_align
+    c_outer += b"\x00" * pad_after_s + c_inner
+    # pad to int alignment (4) — already aligned
+    c_outer += struct.pack("@i", 42)
+    # trailing pad to struct alignment (8)
+    struct_align = inner_align
+    trail = (struct_align - len(c_outer) % struct_align) % struct_align
+    c_outer += b"\x00" * trail
+
+    buf = BytesIO()
+    OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42).c_pack(buf)
+    assert buf.getvalue() == c_outer
+
+
+def test_nested_mixed_alignment_unpack():
+    buf = BytesIO()
+    original = OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42)
+    original.c_pack(buf)
+    buf.seek(0)
+    result = OuterMixed.c_unpack(buf)
+    assert result.s == 5
+    assert result.inner.c == 97
+    assert result.inner.d == pytest.approx(math.pi)
+    assert result.i == 42
+
+
+def test_nested_mixed_alignment_roundtrip():
+    original = OuterMixed(s=5, inner=InnerMixed(c=97, d=math.pi), i=42)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert OuterMixed.c_unpack(buf) == original

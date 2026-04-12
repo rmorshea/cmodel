@@ -106,17 +106,17 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
             field_schemas = schema["field_schemas"]
             if schema["anonymous"]:
                 tuple_values: list[Any] = []
-                for s in field_schemas.values():
+                field_list = tuple(field_schemas.values())
+                for idx, s in enumerate(field_list):
                     tuple_values.append(unpack_c_schema(io, s["schema"]))
-                    # add padding to align to the next field
-                    io.seek((alignment - (io.tell() % alignment)) % alignment, 1)
+                    io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
                 return tuple(tuple_values)
             else:
                 dict_values: dict[str, Any] = {}
-                for f, s in field_schemas.items():
+                field_list = tuple(field_schemas.values())
+                for idx, (f, s) in enumerate(field_schemas.items()):
                     dict_values[f] = unpack_c_schema(io, s["schema"])
-                    # add padding to align to the next field
-                    io.seek((alignment - (io.tell() % alignment)) % alignment, 1)
+                    io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
                 return dict_values
         case "tagged-union":
             tag_schema = schema["tag_schema"]
@@ -145,15 +145,15 @@ def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
             if schema["anonymous"]:
-                for s, v in zip(field_schemas.values(), value, strict=True):
+                field_list = tuple(field_schemas.values())
+                for idx, (s, v) in enumerate(zip(field_list, value, strict=True)):
                     pack_c_schema(io, s["schema"], v)
-                    # add padding to align to the next field
-                    io.write(b"\x00" * ((alignment - (io.tell() % alignment)) % alignment))
+                    io.write(b"\x00" * _next_padding(io.tell(), idx, field_list, alignment))
             else:
-                for f, s in field_schemas.items():
+                field_list = tuple(field_schemas.values())
+                for idx, (f, s) in enumerate(field_schemas.items()):
                     pack_c_schema(io, s["schema"], value[f])
-                    # add padding to align to the next field
-                    io.write(b"\x00" * ((alignment - (io.tell() % alignment)) % alignment))
+                    io.write(b"\x00" * _next_padding(io.tell(), idx, field_list, alignment))
         case "tagged-union":
             tag_value = value[schema["tag_field"]]
             variant_schema = schema["variant_schemas"].get(tag_value)
@@ -292,7 +292,7 @@ def _visit_tuple(
 ) -> None:
     py_items_schema = py_schema["items_schema"]
     variadic_item_index = py_schema.get("variadic_item_index", -1)
-    if variadic_item_index > 0 and variadic_item_index + 1 != len(py_items_schema):
+    if variadic_item_index >= 0 and variadic_item_index + 1 != len(py_items_schema):
         msg = "CModel does not support variadic tuples"
         raise ValueError(msg)
 
@@ -493,3 +493,29 @@ def _placeholder_struct_field_schema(*, variable_length: bool = False) -> CStruc
         schema=None,  # pyright: ignore[reportArgumentType]
         variable_length=variable_length,
     )
+
+
+def _next_padding(
+    position: int,
+    idx: int,
+    field_schemas: tuple[CStructFieldSchema, ...],
+    struct_align: int,
+) -> int:
+    """Return the number of padding bytes needed after field *idx*.
+
+    Between fields, padding aligns to the next field's natural alignment capped
+    by *struct_align* (pack(n) semantics).  After the last field, trailing
+    padding aligns to the struct alignment.
+
+    Args:
+        position: the current byte position in the struct
+        idx: the index of the current field
+        field_schemas: the schemas of all fields in the struct, in order
+        struct_align: the overall struct alignment to cap field alignments at
+    """
+    next_align = (
+        min(field_schemas[idx + 1]["schema"]["alignment"], struct_align)
+        if idx + 1 < len(field_schemas)
+        else struct_align
+    )
+    return (next_align - (position % next_align)) % next_align
