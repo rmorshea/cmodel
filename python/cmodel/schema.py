@@ -207,6 +207,8 @@ def _visit(
             _visit_tuple(py_schema, handler, context)
         case "tagged-union":
             _visit_tagged_union(py_schema, handler, context)
+        case "default":
+            _visit(py_schema["schema"], handler, context)
         case "int":
             c_schema = _simple_format_schema("i", context)
             context["field_schema"]["schema"] = c_schema
@@ -342,14 +344,10 @@ def _visit_tagged_union(
         msg = "Tagged unions must have at least one variant"
         raise ValueError(msg)
 
-    # The above mechanism does allow us to check whether the choices are variable length or not.
+    # The above mechanism allows us to check whether the choices are variable length or not.
     variable_length_values = [c["variable_length"] for c in c_choice_fields.values()]
     if any(variable_length_values):
-        if all(variable_length_values):
-            context["field_schema"]["variable_length"] = True
-        else:
-            msg = "All variants of a tagged union must be variable length if any of them are"
-            raise ValueError(msg)
+        context["field_schema"]["variable_length"] = True
 
     # Now we can build the tagged union schema using the captured choice schemas.
     c_choices = {k: v["schema"] for k, v in c_choice_fields.items()}

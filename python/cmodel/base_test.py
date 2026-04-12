@@ -474,6 +474,76 @@ def test_c_encoded_receives_endian_and_size_type():
     assert captured["size"] == "standard"
 
 
+class _DefaultModel(CModel):
+    count: Int
+    flag: Bool = True
+
+
+def test_default_field_unpack():
+    buf = BytesIO(struct.pack("i?", 5, False))
+    result = _DefaultModel.c_unpack(buf)
+    assert result.count == 5
+    assert result.flag is False
+
+
+def test_default_field_pack():
+    buf = BytesIO()
+    _DefaultModel(count=5).c_pack(buf)
+    # Include trailing padding to match struct alignment
+    expected = struct.pack("i?", 5, True) + b"\x00" * 3
+    assert buf.getvalue() == expected
+
+
+def test_default_field_roundtrip():
+    original = _DefaultModel(count=7, flag=False)
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _DefaultModel.c_unpack(buf) == original
+
+
+class _FixedCat(CModel):
+    pet_type: An[Literal[1], c_int(1)]
+    meows: Int
+
+
+class _VariableDog(CModel):
+    pet_type: An[Literal[2], c_int(1)]
+    sound: RawBytes
+
+
+class _MixedUnionEnvelope(CModel):
+    pet: An[_FixedCat | _VariableDog, Discriminator("pet_type")]
+
+
+def test_mixed_tagged_union_fixed_variant_roundtrip():
+    original = _MixedUnionEnvelope(pet=_FixedCat(pet_type=1, meows=7))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _MixedUnionEnvelope.c_unpack(buf) == original
+
+
+def test_mixed_tagged_union_variable_variant_roundtrip():
+    original = _MixedUnionEnvelope(pet=_VariableDog(pet_type=2, sound=b"\xaa\xbb\xcc\xdd"))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _MixedUnionEnvelope.c_unpack(buf) == original
+
+
+def test_mixed_tagged_union_unpack_fixed():
+    buf = BytesIO(struct.pack("ii", 1, 42))
+    result = _MixedUnionEnvelope.c_unpack(buf)
+    assert result.pet == _FixedCat(pet_type=1, meows=42)
+
+
+def test_mixed_tagged_union_unpack_variable():
+    buf = BytesIO(struct.pack("i", 2) + b"\xde\xad")
+    result = _MixedUnionEnvelope.c_unpack(buf)
+    assert result.pet == _VariableDog(pet_type=2, sound=b"\xde\xad")
+
+
 class MixedAlignmentModel(CModel):
     """double(8) + signed_char(1) + int(4) — tests per-field alignment padding."""
 

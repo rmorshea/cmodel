@@ -63,6 +63,25 @@ c_unsigned_long = _make_one_or_many(int, "L")
 UnsignedLong = An[int, c_unsigned_long(1)]
 """C format for a single unsigned long."""
 
+c_long_long = _make_one_or_many(int, "q")
+"""Annotated metadata for one or more long longs. `count>1` represents a tuple of values."""
+LongLong = An[int, c_long_long(1)]
+"""C format for a single long long."""
+
+c_unsigned_long_long = _make_one_or_many(int, "Q")
+"""Annotated metadata for unsigned long longs. `count>1` represents a tuple of values."""
+UnsignedLongLong = An[int, c_unsigned_long_long(1)]
+"""C format for a single unsigned long long."""
+
+c_ssize_t = _make_one_or_many(int, "n")
+"""Annotated metadata for one or more ssize_t values. `count>1` represents a tuple of values."""
+SSizeT = An[int, c_ssize_t(1)]
+"""C format for a single ssize_t."""
+
+c_size_t = _make_one_or_many(int, "N")
+"""Annotated metadata for one or more size_t values. `count>1` represents a tuple of values."""
+SizeT = An[int, c_size_t(1)]
+
 c_float = _make_one_or_many(float, "f")
 """Annotated metadata for one or more floats. `count>1` represents a tuple of values."""
 Float = An[float, c_float(1)]

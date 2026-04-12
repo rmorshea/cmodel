@@ -7,6 +7,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.5.0
+
+- Added support for fields with default values. ([#9](https://github.com/rmorshea/cmodel/pull/9))
+- Added built-in types `LongLong`, `UnsignedLongLong`, `SSizeT`, and `SizeT` (format chars `q`, `Q`, `n`, `N`). ([#9](https://github.com/rmorshea/cmodel/pull/9))
+- Allowed tagged union schemas to mix variable-length and fixed-length variants. ([#9](https://github.com/rmorshea/cmodel/pull/9))
+
+## v0.4.0
+
 - Added `CEncoded` annotation for fields that need custom or variable-length binary encoding not expressible as a `struct` format string. ([#8](https://github.com/rmorshea/cmodel/pull/8))
 - Added `RawBytes` type for trailing variable-length byte fields. ([#8](https://github.com/rmorshea/cmodel/pull/8))
 - Fixed inter-field padding to align based on the next field's natural alignment instead of only the struct's overall alignment. ([#8](https://github.com/rmorshea/cmodel/pull/8))
