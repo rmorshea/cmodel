@@ -7,7 +7,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
-Nothing yet.
+...
+
+## v0.6.0
+
+- Changed `CEncoderSchema` pack and unpack functions to accept a context arg. In particular, `unpack` now receives a `CUnpackContext` that includes a `preceding_fields` dict for reading previously unpacked fields from the same struct. ([#10](https://github.com/rmorshea/cmodel/pull/10))
+- Added `get_c_format_prefix` utility as a public function. ([#10](https://github.com/rmorshea/cmodel/pull/10))
 
 ## v0.5.0
 

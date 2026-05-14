@@ -30,6 +30,54 @@ type SizeType = Literal["standard", "native"]
 """Whether to use standard sizes for C types or native sizes."""
 
 
+type Prefix = Literal["@", "=", "<", ">", "!"]
+"""A type for valid struct format string prefixes."""
+PREFIXES = set(get_args(Prefix))
+"""A set of valid struct format string prefixes."""
+
+
+def get_c_format_prefix(
+    endian_type: "EndianType",
+    size_type: "SizeType",
+    error_msg: str,
+) -> Prefix:
+    """Get the format prefix for the given endianness and size."""
+    match (endian_type, size_type):
+        case ("native", "native"):
+            return "@"
+        case ("native", "standard"):
+            return "="
+        case ("little", "standard"):
+            return "<"
+        case ("big", "standard"):
+            return ">"
+        case ("network", "standard"):
+            return "!"
+        case (e, s):
+            msg = f"Invalid combination of endian_type {e} and size_type {s}{error_msg}"
+            raise ValueError(msg)
+
+
+class CPackContext(TypedDict):
+    """Context passed to CEncoderSchema pack functions."""
+
+    struct_schema: "CStructSchema"
+    """The schema of the struct currently being packed."""
+    field_name: str
+    """The name of the field being packed."""
+
+
+class CUnpackContext(TypedDict):
+    """Context passed to CEncoderSchema unpack functions."""
+
+    struct_schema: "CStructSchema"
+    """The schema of the struct currently being packed."""
+    preceding_fields: Mapping[str, Any]
+    """The fields that have been unpacked so far in the current struct, keyed by field name."""
+    field_name: str
+    """The name of the field being unpacked."""
+
+
 class CEncoderSchema[T](TypedDict):
     """An object that can pack and unpack a value to and from a binary buffer."""
 
@@ -39,9 +87,9 @@ class CEncoderSchema[T](TypedDict):
     """The size of this value in bytes - None if variable length."""
     alignment: int
     """The alignment requirement of this value in bytes."""
-    unpack: Callable[[BytesIO], T]
+    unpack: Callable[[BytesIO, CUnpackContext], T]
     """A function to read this value from a binary buffer."""
-    pack: Callable[[BytesIO, T], Any]
+    pack: Callable[[BytesIO, T, CPackContext], Any]
     """A function to write this value to a binary buffer."""
     schema_equality_info: Hashable
     """A value used to determine if two CEncoderSchemas are equal."""
@@ -92,30 +140,54 @@ class CStructSchema(TypedDict):
     """The CModel class that this schema corresponds to."""
 
 
-CSchema = CStructSchema | CEncoderSchema | CTaggedUnionSchema
+type CSchema = CStructSchema | CEncoderSchema | CTaggedUnionSchema
 """Any C schema"""
 
 
 def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
     """Unpack a C struct from a buffer according to the provided schema."""
+    return _unpack_c_schema(
+        io,
+        schema,
+        {
+            "field_name": "",
+            "preceding_fields": {},
+            "struct_schema": _placeholder_struct_schema(anonymous=True),
+        },
+    )
+
+
+def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> Any:
+    """Unpack a C struct from a buffer according to the provided schema."""
     match schema["type"]:
         case "encoder":
-            return schema["unpack"](io)
+            return schema["unpack"](io, context)
         case "struct":
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
             if schema["anonymous"]:
                 tuple_values: list[Any] = []
                 field_list = tuple(field_schemas.values())
+                # anonymous struct can't refer to preceding fields by name
+                context = {"struct_schema": schema, "preceding_fields": {}, "field_name": ""}
                 for idx, s in enumerate(field_list):
-                    tuple_values.append(unpack_c_schema(io, s["schema"]))
+                    tuple_values.append(_unpack_c_schema(io, s["schema"], context))
                     io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
                 return tuple(tuple_values)
             else:
                 dict_values: dict[str, Any] = {}
+                context = {
+                    "struct_schema": schema,
+                    "preceding_fields": dict_values,
+                    "field_name": "",  # placeholder, will be set correctly in loop
+                }
                 field_list = tuple(field_schemas.values())
                 for idx, (f, s) in enumerate(field_schemas.items()):
-                    dict_values[f] = unpack_c_schema(io, s["schema"])
+                    dict_values[f] = _unpack_c_schema(
+                        io,
+                        s["schema"],
+                        {**context, "field_name": f},
+                    )
                     io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
                 return dict_values
         case "tagged-union":
@@ -124,13 +196,13 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
             if tag_size is None:
                 msg = "Tag schema for tagged union must have a fixed size"
                 raise ValueError(msg)
-            tag_value = unpack_c_schema(io, tag_schema)
+            tag_value = _unpack_c_schema(io, tag_schema, context)
             io.seek(io.tell() - tag_size, 0)  # rewind to the start of the tag field
             variant_schema = schema["variant_schemas"].get(tag_value)
             if variant_schema is None:
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
-            return unpack_c_schema(io, variant_schema)
+            return _unpack_c_schema(io, variant_schema, context)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -138,21 +210,38 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
 
 def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
     """Pack a value into a buffer according to the provided C schema."""
+    return _pack_c_schema(
+        io,
+        schema,
+        value,
+        {
+            "field_name": "",
+            "struct_schema": _placeholder_struct_schema(anonymous=True),
+        },
+    )
+
+
+def _pack_c_schema(io: BytesIO, schema: CSchema, value: Any, context: CPackContext) -> None:
     match schema["type"]:
         case "encoder":
-            schema["pack"](io, value)
+            schema["pack"](io, value, context)
         case "struct":
             alignment = schema["alignment"]
             field_schemas = schema["field_schemas"]
             if schema["anonymous"]:
                 field_list = tuple(field_schemas.values())
                 for idx, (s, v) in enumerate(zip(field_list, value, strict=True)):
-                    pack_c_schema(io, s["schema"], v)
+                    _pack_c_schema(io, s["schema"], v, {"struct_schema": schema, "field_name": ""})
                     io.write(b"\x00" * _next_padding(io.tell(), idx, field_list, alignment))
             else:
                 field_list = tuple(field_schemas.values())
                 for idx, (f, s) in enumerate(field_schemas.items()):
-                    pack_c_schema(io, s["schema"], value[f])
+                    _pack_c_schema(
+                        io,
+                        s["schema"],
+                        value[f],
+                        {"struct_schema": schema, "field_name": f},
+                    )
                     io.write(b"\x00" * _next_padding(io.tell(), idx, field_list, alignment))
         case "tagged-union":
             tag_value = value[schema["tag_field"]]
@@ -160,7 +249,7 @@ def pack_c_schema(io: BytesIO, schema: CSchema, value: Any) -> None:
             if variant_schema is None:
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
-            pack_c_schema(io, variant_schema, value)
+            _pack_c_schema(io, variant_schema, value, context)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -444,7 +533,7 @@ def _encoder_schema_from_c_format(
 ) -> CEncoderSchema:
     """Convert a CFormat to a CEncoderSchema using the provided endianness and size type."""
     struct_schema = context["struct_schema"]
-    prefix = _utils.get_c_format_prefix(
+    prefix = get_c_format_prefix(
         struct_schema["endian_type"],
         struct_schema["size_type"],
         error_msg=f" for {cls}" if (cls := struct_schema.get("cls")) else "",
@@ -460,8 +549,8 @@ def _encoder_schema_from_c_format(
         type="encoder",
         size=fmt_size,
         alignment=_utils.get_format_alignment(prefix, c_format.format),
-        unpack=lambda io: c_format.validate(fmt_unpack(io.read(fmt_size))),
-        pack=lambda io, value: io.write(fmt_pack(*c_format.dump(value))),
+        unpack=lambda io, _: c_format.validate(fmt_unpack(io.read(fmt_size))),
+        pack=lambda io, value, _: io.write(fmt_pack(*c_format.dump(value))),
         schema_equality_info=(prefix, c_format.format),
     )
 

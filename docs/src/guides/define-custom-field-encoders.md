@@ -51,10 +51,10 @@ from cmodel.schema import CEncoderSchema
 def uint24(endian: str, size: str) -> CEncoderSchema[int]:
     byteorder = "little" if endian in ("native", "little") else "big"
 
-    def unpack(buf):
+    def unpack(buf, _ctx):  # context unused for fixed-size fields
         return int.from_bytes(buf.read(3), byteorder)
 
-    def pack(buf, value):
+    def pack(buf, value, _ctx):  # context unused for fixed-size fields
         buf.write(value.to_bytes(3, byteorder))
 
     return CEncoderSchema[int](
@@ -85,14 +85,14 @@ outside what `struct` can express, [`CFormat`][cmodel.base.CFormat] cannot descr
 The [`CEncoderSchema`][cmodel.schema.CEncoderSchema] dict returned by `get_encoder`
 has the following keys:
 
-| Key                    | Type                  | Purpose                                                        |
-| ---------------------- | --------------------- | -------------------------------------------------------------- |
-| `type`                 | `"encoder"`           | Must always be `"encoder"`.                                    |
-| `size`                 | `int \| None`         | Byte size of the encoded value, or `None` for variable length. |
-| `alignment`            | `int`                 | Alignment requirement in bytes.                                |
-| `unpack`               | `(BytesIO) -> T`      | Read the value from a buffer.                                  |
-| `pack`                 | `(BytesIO, T) -> Any` | Write the value to a buffer.                                   |
-| `schema_equality_info` | `Hashable`            | Used to compare two schemas for equality.                      |
+| Key                    | Type                                | Purpose                                                        |
+| ---------------------- | ----------------------------------- | -------------------------------------------------------------- |
+| `type`                 | `"encoder"`                         | Must always be `"encoder"`.                                    |
+| `size`                 | `int \| None`                       | Byte size of the encoded value, or `None` for variable length. |
+| `alignment`            | `int`                               | Alignment requirement in bytes.                                |
+| `unpack`               | `(BytesIO, CUnpackContext) -> T`    | Read the value from a buffer.                                  |
+| `pack`                 | `(BytesIO, T, CPackContext) -> Any` | Write the value to a buffer.                                   |
+| `schema_equality_info` | `Hashable`                          | Used to compare two schemas for equality.                      |
 
 Set `size` to `None` for variable-length fields. A variable-length field should
 generally be the last field in a struct, since its `unpack` function may read to the end
@@ -111,3 +111,56 @@ class BigEndianSample(CModel, c_endian_type="big"):
 
 The `uint24` factory will be called with `endian="big"`, so it writes the three bytes
 in big-endian order.
+
+## Read preceding fields from context
+
+The `unpack` function receives a [`CUnpackContext`][cmodel.schema.CUnpackContext] as
+its second argument, and `pack` receives a [`CPackContext`][cmodel.schema.CPackContext]
+as its third. When the field you're encoding depends on an earlier field in the same
+struct, read it from `CUnpackContext.preceding_fields`.
+
+A common case is a **length-prefixed array** — a pattern seen frequently in network
+protocols and binary file formats:
+
+```c
+uint8_t array_length;
+uint8_t array_data[];
+```
+
+```python
+from typing import Annotated
+
+from cmodel import CEncoded, CModel
+from cmodel.schema import CEncoderSchema
+from cmodel.types import UnsignedChar
+
+
+def sized_bytes(endian: str, size: str) -> CEncoderSchema[bytes]:
+    return CEncoderSchema[bytes](
+        type="encoder",
+        size=None,  # variable length
+        alignment=1,
+        unpack=lambda buf, ctx: buf.read(ctx["preceding_fields"]["array_length"]),
+        pack=lambda buf, value, _ctx: buf.write(value),
+        schema_equality_info=("example", "sized_bytes"),
+    )
+
+
+SizedBytes = Annotated[bytes, CEncoded(get_encoder=sized_bytes)]
+
+
+class ArrayPacket(CModel):
+    array_length: UnsignedChar
+    array_data: SizedBytes
+```
+
+`ArrayPacket.c_unpack(buf)` reads one byte as the length, then reads exactly that many
+bytes into `array_data`. Because `array_data` is variable length (`size=None`), it must
+be the last field in the struct.
+
+The `pack` function ignores context here. The caller is responsible for keeping
+`array_length` consistent with `len(array_data)`.
+
+For `pack`, [`CPackContext`][cmodel.schema.CPackContext] gives you `struct_schema` and
+`field_name` but does not carry a `preceding_fields` mapping, since fields may be
+packed in any order by the caller.
