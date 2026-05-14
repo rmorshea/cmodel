@@ -18,6 +18,7 @@ from cmodel.types import Int
 from cmodel.types import RawBytes
 from cmodel.types import Short
 from cmodel.types import SignedChar
+from cmodel.types import UnsignedChar
 from cmodel.types import c_int
 from cmodel.types import c_short
 
@@ -596,6 +597,58 @@ def test_short_double_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert ShortDoubleModel.c_unpack(buf) == original
+
+
+# ---------------------------------------------------------------------------
+# Context-aware encoder: length-prefixed (sized) array
+# Models the C pattern:  uint8_t array_length; uint8_t array_data[];
+# The unpack function reads `array_length` from preceding_fields to know
+# how many bytes to consume, demonstrating CUnpackContext usage.
+# ---------------------------------------------------------------------------
+
+
+def _sized_bytes_encoder(endian: str, size: str) -> CEncoderSchema[bytes]:
+    return CEncoderSchema[bytes](
+        type="encoder",
+        size=None,
+        alignment=1,
+        unpack=lambda buf, ctx: buf.read(ctx["preceding_fields"]["array_length"]),
+        pack=lambda buf, value, _ctx: buf.write(value),
+        schema_equality_info=("test", "sized_bytes"),
+    )
+
+
+class _SizedArrayModel(CModel):
+    array_length: UnsignedChar
+    array_data: An[bytes, CEncoded(get_encoder=_sized_bytes_encoder)]
+
+
+def test_sized_array_unpack_reads_length_from_context():
+    data = b"\x03\xaa\xbb\xcc"
+    result = _SizedArrayModel.c_unpack(BytesIO(data))
+    assert result.array_length == 3
+    assert result.array_data == b"\xaa\xbb\xcc"
+
+
+def test_sized_array_unpack_empty():
+    data = b"\x00"
+    result = _SizedArrayModel.c_unpack(BytesIO(data))
+    assert result.array_length == 0
+    assert result.array_data == b""
+
+
+def test_sized_array_pack():
+    buf = BytesIO()
+    _SizedArrayModel(array_length=3, array_data=b"\xaa\xbb\xcc").c_pack(buf)
+    assert buf.getvalue() == b"\x03\xaa\xbb\xcc"
+
+
+def test_sized_array_roundtrip():
+    original = _SizedArrayModel(array_length=4, array_data=b"\x01\x02\x03\x04")
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _SizedArrayModel.c_unpack(buf) == original
 
 
 class InnerMixed(CModel):
