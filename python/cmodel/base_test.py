@@ -431,8 +431,8 @@ def test_c_encoded_custom_encoder():
             type="encoder",
             alignment=fmt.size,
             size=fmt.size,
-            unpack=lambda buf: fmt.unpack(buf.read(fmt.size))[0] // 2,
-            pack=lambda buf, v: buf.write(fmt.pack(v * 2)),
+            unpack=lambda buf, _: fmt.unpack(buf.read(fmt.size))[0] // 2,
+            pack=lambda buf, v, _: buf.write(fmt.pack(v * 2)),
             schema_equality_info=("test", "doubler"),
         )
 
@@ -462,8 +462,8 @@ def test_c_encoded_receives_endian_and_size_type():
             type="encoder",
             alignment=4,
             size=4,
-            unpack=lambda buf: fmt.unpack(buf.read(4))[0],
-            pack=lambda buf, v: buf.write(fmt.pack(v)),
+            unpack=lambda buf, _: fmt.unpack(buf.read(4))[0],
+            pack=lambda buf, v, _: buf.write(fmt.pack(v)),
             schema_equality_info=("test", "capture"),
         )
 

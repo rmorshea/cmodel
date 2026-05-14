@@ -2,9 +2,7 @@ from collections.abc import Collection
 from struct import calcsize
 from typing import TYPE_CHECKING
 from typing import Any
-from typing import Literal
 from typing import TypedDict
-from typing import get_args
 
 from pydantic_core import core_schema as cs
 
@@ -12,14 +10,7 @@ if TYPE_CHECKING:
     from cmodel.base import CEncoded
     from cmodel.base import CFormat
     from cmodel.schema import CStructFieldSchema
-    from cmodel.schema import EndianType
-    from cmodel.schema import SizeType
-
-
-type Prefix = Literal["@", "=", "<", ">", "!"]
-"""A type for valid struct format string prefixes."""
-PREFIXES = set(get_args(Prefix))
-"""A set of valid struct format string prefixes."""
+    from cmodel.schema import Prefix
 
 
 class PydanticSchemaMetadata[T](TypedDict, total=False):
@@ -44,7 +35,7 @@ def set_pydantic_schema_metadata(schema: cs.CoreSchema, metadata: PydanticSchema
 PYDANTIC_SCHEMA_METADATA_KEY = "cmodel"
 
 
-def get_format_alignment(prefix: Prefix, fmt: str) -> int:
+def get_format_alignment(prefix: "Prefix", fmt: str) -> int:
     """Return the size and character of the most strictly aligned type in a C format string."""
     size = 0
     for new_char in fmt:
@@ -65,25 +56,3 @@ def get_field_schema_alignment(field_schemas: Collection["CStructFieldSchema"]) 
 
 def identity(x: Any) -> Any:
     return x
-
-
-def get_c_format_prefix(
-    endian_type: "EndianType",
-    size_type: "SizeType",
-    error_msg: str,
-) -> Prefix:
-    """Get the format prefix for the given endianness and size."""
-    match (endian_type, size_type):
-        case ("native", "native"):
-            return "@"
-        case ("native", "standard"):
-            return "="
-        case ("little", "standard"):
-            return "<"
-        case ("big", "standard"):
-            return ">"
-        case ("network", "standard"):
-            return "!"
-        case (e, s):
-            msg = f"Invalid combination of endian_type {e} and size_type {s}{error_msg}"
-            raise ValueError(msg)

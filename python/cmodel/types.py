@@ -20,86 +20,86 @@ def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFormat[T]]:
 
 c_signed_char = _make_one_or_many(int, "b")
 """Annotated metadata for one or more signed chars. `count>1` represents a tuple of values."""
-SignedChar = An[int, c_signed_char(1)]
+type SignedChar = An[int, c_signed_char(1)]
 """C format for a single signed char."""
 
 c_unsigned_char = _make_one_or_many(int, "B")
 """Annotated metadata for one or more unsigned chars. `count>1` represents a tuple of values."""
-UnsignedChar = An[int, c_unsigned_char(1)]
+type UnsignedChar = An[int, c_unsigned_char(1)]
 """C format for a single unsigned char."""
 
 c_bool = _make_one_or_many(bool, "?")
 """Annotated metadata for one or more bools. `count>1` represents a tuple of values."""
-Bool = An[bool, c_bool(1)]
+type Bool = An[bool, c_bool(1)]
 """C format for a single bool."""
 
 c_short = _make_one_or_many(int, "h")
 """Annotated metadata for one or more shorts. `count>1` represents a tuple of values."""
-Short = An[int, c_short(1)]
+type Short = An[int, c_short(1)]
 """C format for a single short."""
 
 c_unsigned_short = _make_one_or_many(int, "H")
 """Annotated metadata for one or more unsigned shorts. `count>1` represents a tuple of values."""
-UnsignedShort = An[int, c_unsigned_short(1)]
+type UnsignedShort = An[int, c_unsigned_short(1)]
 """C format for a single unsigned short."""
 
 c_int = _make_one_or_many(int, "i")
 """Annotated metadata for one or more ints. `count>1` represents a tuple of values."""
-Int = An[int, c_int(1)]
+type Int = An[int, c_int(1)]
 """C format for a single int."""
 
 c_unsigned_int = _make_one_or_many(int, "I")
 """Annotated metadata for one or more unsigned ints. `count>1` represents a tuple of values."""
-UnsignedInt = An[int, c_unsigned_int(1)]
+type UnsignedInt = An[int, c_unsigned_int(1)]
 """C format for a single unsigned int."""
 
 c_long = _make_one_or_many(int, "l")
 """Annotated metadata for one or more longs. `count>1` represents a tuple of values."""
-Long = An[int, c_long(1)]
+type Long = An[int, c_long(1)]
 """C format for a single long."""
 
 c_unsigned_long = _make_one_or_many(int, "L")
 """Annotated metadata for one or more unsigned longs. `count>1` represents a tuple of values."""
-UnsignedLong = An[int, c_unsigned_long(1)]
+type UnsignedLong = An[int, c_unsigned_long(1)]
 """C format for a single unsigned long."""
 
 c_long_long = _make_one_or_many(int, "q")
 """Annotated metadata for one or more long longs. `count>1` represents a tuple of values."""
-LongLong = An[int, c_long_long(1)]
+type LongLong = An[int, c_long_long(1)]
 """C format for a single long long."""
 
 c_unsigned_long_long = _make_one_or_many(int, "Q")
 """Annotated metadata for unsigned long longs. `count>1` represents a tuple of values."""
-UnsignedLongLong = An[int, c_unsigned_long_long(1)]
+type UnsignedLongLong = An[int, c_unsigned_long_long(1)]
 """C format for a single unsigned long long."""
 
 c_ssize_t = _make_one_or_many(int, "n")
 """Annotated metadata for one or more ssize_t values. `count>1` represents a tuple of values."""
-SSizeT = An[int, c_ssize_t(1)]
+type SSizeT = An[int, c_ssize_t(1)]
 """C format for a single ssize_t."""
 
 c_size_t = _make_one_or_many(int, "N")
 """Annotated metadata for one or more size_t values. `count>1` represents a tuple of values."""
-SizeT = An[int, c_size_t(1)]
+type SizeT = An[int, c_size_t(1)]
 
 c_float = _make_one_or_many(float, "f")
 """Annotated metadata for one or more floats. `count>1` represents a tuple of values."""
-Float = An[float, c_float(1)]
+type Float = An[float, c_float(1)]
 """C format for a single float."""
 
 c_double = _make_one_or_many(float, "d")
 """Annotated metadata for one or more doubles. `count>1` represents a tuple of values."""
-Double = An[float, c_double(1)]
+type Double = An[float, c_double(1)]
 """C format for a single double."""
 
 c_complex_float = _make_one_or_many(complex, "F")
 """Annotated metadata for one or more complex floats. `count>1` represents a tuple of values."""
-ComplexFloat = An[complex, c_complex_float(1)]
+type ComplexFloat = An[complex, c_complex_float(1)]
 """C format for a single complex float."""
 
 c_complex_double = _make_one_or_many(complex, "D")
 """Annotated metadata for one or more complex doubles. `count>1` represents a tuple of values."""
-ComplexDouble = An[complex, c_complex_double(1)]
+type ComplexDouble = An[complex, c_complex_double(1)]
 """C format for a single complex double."""
 
 
@@ -108,7 +108,7 @@ def c_uuid() -> CFormat[UUID]:
     return CFormat(format="16s", validate=lambda x: UUID(bytes=x[0]), dump=lambda x: (x.bytes,))
 
 
-Uuid = An[UUID, c_uuid()]
+type Uuid = An[UUID, c_uuid()]
 """C format for a single UUID."""
 
 
@@ -117,15 +117,15 @@ def c_char(count: int) -> CFormat:
     return CFormat(format=f"{count}s", validate=operator.itemgetter(0), dump=lambda x: (x,))
 
 
-RawBytes = An[
+type RawBytes = An[
     bytes,
     CEncoded(
         get_encoder=lambda e, s: CEncoderSchema[bytes](
             type="encoder",
             alignment=1,
             size=None,
-            unpack=lambda buffer: buffer.read(),
-            pack=lambda buffer, value: buffer.write(value),
+            unpack=lambda buffer, _: buffer.read(),
+            pack=lambda buffer, value, _: buffer.write(value),
             schema_equality_info=(__name__, "ByteArray"),
         )
     ),
