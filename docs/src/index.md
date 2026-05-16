@@ -82,15 +82,15 @@ class Triangle(CModel):
 ```
 
 Variable-length arrays are modeled with variadic tuples. Use
-[`CCountField`][cmodel.base.CCountField] when another field stores the element count:
+[`CCountedBy`][cmodel.base.CCountedBy] when another field stores the element count:
 
 ```python
-from cmodel import CCountField
+from cmodel import CCountedBy
 
 
 class CountedPacket(CModel):
     values_count: Int
-    values: Annotated[tuple[int, ...], CCountField.template("{}_count")]
+    values: Annotated[tuple[int, ...], CCountedBy.template("{}_count")]
 ```
 
 Or use an unbounded trailing array with `tuple[T, ...]`, which reads until the end of

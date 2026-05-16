@@ -30,7 +30,7 @@ For example, `Int` means “validate this as an integer, but pack it with the `i
 format”. `Annotated[tuple[int, int, int], c_int(3)]` means “validate this as a tuple of
 three integers, and pack it as three consecutive `int` values”.
 
-For variable-length arrays, `Annotated[tuple[T, ...], CCountField(...)]` ties the array
+For variable-length arrays, `Annotated[tuple[T, ...], CCountedBy(...)]` ties the array
 length to another field in the same struct, while plain `tuple[T, ...]` defines an
 unbounded trailing array that reads to the end of the buffer.
 

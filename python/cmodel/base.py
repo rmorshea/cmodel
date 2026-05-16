@@ -46,7 +46,7 @@ class CModel(BaseModel):
     """A mapping of validator names to functions that take a completed model instance.
 
     These are populated while constructing the c_schema for this model and run in the order
-    they were added. For example, a variable length tuple with a `CCountField` will add a
+    they were added. For example, a variable length tuple with a `CCountedBy` will add a
     validator to ensure the length of the tuple matches the count field.
     """
 
@@ -157,7 +157,7 @@ class CEncoded[T]:
 
 
 @dataclass(kw_only=True)
-class CCountField:
+class CCountedBy:
     """Pydantic annotated metadata defining the element count in a variable length array.
 
     This should be used to annotate a variadic tuple (``tuple[T, ...]``) when the number
@@ -166,33 +166,38 @@ class CCountField:
     ```python
     from typing import Annotated as An
 
-    from cmodel import CCountField
+    from cmodel import CCountedBy
     from cmodel import CModel
 
 
     class MyModel(CModel):
         values_count: int
-        values: An[tuple[int, ...], CCountField.template("{}_count")]
+        values: An[tuple[int, ...], CCountedBy.name("values_count")]
     ```
 
-    By contrast, a bare ``tuple[T, ...]`` with no ``CCountField`` is treated as an
+    By contrast, a bare ``tuple[T, ...]`` with no ``CCountedBy`` is treated as an
     unbounded trailing array that reads until the end of the buffer.
     """
 
-    get_count_field_name: Callable[[str], str]
+    get_count_field_name: Callable[[CBuildContext], str]
     """Return the field name containing the count of elements, given the name of the array field."""
     count_field_value_as_int: Callable[[Any], int] | None = None
     """Cast the value of the count field to an int."""
 
     @classmethod
+    def name(cls, count_field_name: str, as_int: Callable[[Any], int] | None = None) -> Self:
+        """Create a CCountedBy with the given count field name."""
+        return cls(get_count_field_name=lambda _: count_field_name, count_field_value_as_int=as_int)
+
+    @classmethod
     def template(cls, template_str: str, as_int: Callable[[Any], int] | None = None) -> Self:
-        """Create a CCountField with a template string for the count field name.
+        """Create a CCountedBy with a template string for the count field name.
 
         Args:
             template_str:
                 The template string should contain one `{}` placeholder, which will be replaced
                 with the name of the array field to get the name of the count field. For example,
-                `CCountFieldField. template("{}_count")` will create a CCountFieldField that looks
+                `CCountedByField. template("{}_count")` will create a CCountedByField that looks
                 for a count field named `<array_field_name>_count` for an array field named
                 `<array_field_name>`.
             as_int:
@@ -201,7 +206,7 @@ class CCountField:
                 and you could pass `lambda x: x.bit_count()` to get the count.
         """
         return cls(
-            get_count_field_name=lambda field_name: template_str.format(field_name),
+            get_count_field_name=lambda build_ctx: template_str.format(build_ctx["field_name"]),
             count_field_value_as_int=as_int,
         )
 

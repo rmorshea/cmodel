@@ -70,18 +70,19 @@ format helper.
 
 ## Represent variable-length arrays with a count field
 
-When a struct stores array length in a separate field, annotate a variadic tuple with
-[`CCountField`][cmodel.base.CCountField].
+When a struct stores array length in a separate field, you can use a `CountedArray`. This
+requires the field contianing the count to be named `{field_name}_count` where `{field_name}` is 
+the name of the array field.
 
 ```python
 from typing import Annotated
 
-from cmodel import CCountField
+from cmodel.types import CountedArray
 
 
 class Packet(CModel):
     values_count: Int
-    values: Annotated[tuple[int, ...], CCountField.template("{}_count")]
+    values: CountedArray[Int]
 ```
 
 During unpacking, `values_count` determines how many elements are read for `values`.

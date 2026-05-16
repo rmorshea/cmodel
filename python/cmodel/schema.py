@@ -97,6 +97,10 @@ class CBuildContext(TypedDict):
     """The endianness of the current struct being encoded."""
     size_type: SizeType
     """Whether the current struct being encoded uses standard sizes for C types or native sizes."""
+    field_name: str
+    """The name of the field for which the schema is being built."""
+    struct_schema: "CStructSchema"
+    """The schema of the struct for which the schema is being built."""
 
 
 class CEncoderSchema[T](TypedDict):
@@ -631,6 +635,8 @@ def _visit_c_encoded_metadata(
     c_schema = c_encoded.get_encoder({
         "endian_type": context["struct_schema"]["endian_type"],
         "size_type": context["struct_schema"]["size_type"],
+        "field_name": context["field_name"],
+        "struct_schema": context["struct_schema"],
     })
     context["field_schema"]["schema"] = c_schema
     context["field_schema"]["size_range"] = c_schema["size_range"]
@@ -650,35 +656,40 @@ def _visit_c_format_metadata(
 
 
 def _visit_c_count_field_metadata(
-    c_count_field: "cmodel.CCountField",
+    c_count_field: "cmodel.CCountedBy",
     py_schema: cs.CoreSchema,
     context: _VisitorContext,
 ) -> None:
     if py_schema["type"] != "tuple":
-        msg = "CCountField metadata can only be applied to tuple schemas"
+        msg = "CCountedBy metadata can only be applied to tuple schemas"
         raise TypeError(msg)
 
     if len(py_schema["items_schema"]) != 1:
         msg = (
-            f"Tuple schemas with CCountField metadata must "
+            f"Tuple schemas with CCountedBy metadata must "
             f"have exactly one item schema, got {len(py_schema['items_schema'])}"
         )
         raise ValueError(msg)
     py_item_schema = py_schema["items_schema"][0]
 
     if py_schema.get("variadic_item_index") != 0:
-        msg = "Tuple schemas with CCountField metadata must be variable length."
+        msg = "Tuple schemas with CCountedBy metadata must be variable length."
         raise ValueError(msg)
 
     if (struct_schema_cls := context["struct_schema"].get("cls")) is None:
         msg = (
-            "CCountField metadata cannot be applied to anonymous structs "
+            "CCountedBy metadata cannot be applied to anonymous structs "
             "because the count field cannot be referenced by name."
         )
         raise ValueError(msg)
 
     field_name = context["field_name"]
-    count_field_name = c_count_field.get_count_field_name(field_name)
+    count_field_name = c_count_field.get_count_field_name({
+        "field_name": field_name,
+        "struct_schema": context["struct_schema"],
+        "endian_type": context["struct_schema"]["endian_type"],
+        "size_type": context["struct_schema"]["size_type"],
+    })
     if count_field_name not in context["struct_schema"]["field_schemas"]:
         struct_schema = context["struct_schema"]
         msg = (

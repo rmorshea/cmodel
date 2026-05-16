@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Annotated as An
 from uuid import UUID
 
+from cmodel.base import CCountedBy
 from cmodel.base import CEncoded
 from cmodel.base import CFormat
 from cmodel.schema import CEncoderSchema
@@ -136,4 +137,13 @@ type RawBytes = An[
 
 Should be the last field in a model, as it reads from the current
 position to the end of the buffer.
+"""
+
+
+type CountedArray[T] = An[tuple[T, ...], CCountedBy.template("{}_count")]
+"""Annotated metadata for an array of items of type T whose length is bounded by another field.
+
+The field containing the count of items should be named `{field_name}_count` where `{field_name}`
+is the name of the array field. For example, `values: CountedArray[int]` expects a preceding
+`values_count: int` field containing the number of ints in the array.
 """

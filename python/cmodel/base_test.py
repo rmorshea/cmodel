@@ -8,7 +8,7 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
-from cmodel.base import CCountField
+from cmodel.base import CCountedBy
 from cmodel.base import CEncoded
 from cmodel.base import CModel
 from cmodel.schema import CBuildContext
@@ -657,7 +657,7 @@ class _VariableLengthArray(CModel):
     """Model with a variable-length tuple field, where the count is determined by another field."""
 
     values_count: Int
-    values: An[tuple[int, ...], CCountField.template("{}_count")]
+    values: An[tuple[int, ...], CCountedBy.name("values_count")]
 
 
 def test_variable_length_tuple():
@@ -679,7 +679,7 @@ class _VariableLengthArrayFromBitmask(CModel):
     values_mask: Int
     values: An[
         tuple[int, ...],
-        CCountField.template("{}_mask", as_int=int.bit_count),
+        CCountedBy.name("values_mask", as_int=int.bit_count),
     ]
 
 
