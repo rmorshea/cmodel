@@ -104,15 +104,24 @@ class CEncoderSchema[T](TypedDict):
     """A value used to determine if two CEncoderSchemas are equal."""
 
 
-class CArraySchema(TypedDict):
-    """A schema for a C array, which is just a wrapper around another C schema with a count."""
+class CArrayCountSchema(TypedDict):
+    """A schema for a count field that determines the number of elements in a C array."""
 
-    type: Literal["array"]
+    type: Literal["array-count"]
 
     count_field_name: str
     """The name of the field that contains the count of elements in the array."""
     count_field_as_int: Callable[[Any], int]
     """A function to interpret the count field value as an int."""
+
+
+class CArraySchema(TypedDict):
+    """A schema for a C array, which is just a wrapper around another C schema with a count."""
+
+    type: Literal["array"]
+
+    count_schema: CArrayCountSchema | None
+    """How to determine the number of elements in this array, or None if unbounded."""
     item_schema: "CSchema"
     """The schema for each element in the array."""
     alignment: int
@@ -228,11 +237,17 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 raise ValueError(msg)
             return _unpack_c_schema(io, variant_schema, context)
         case "array":
-            count_field_name = schema["count_field_name"]
-            count_field_as_int = schema["count_field_as_int"]
-            item_schema = schema["item_schema"]
-            count = count_field_as_int(context["preceding_fields"][count_field_name])
-            return tuple(_unpack_c_schema(io, item_schema, context) for _ in range(count))
+            if (count_schema := schema["count_schema"]) is None:
+                items = []
+                while io.tell() < len(io.getbuffer()):
+                    items.append(_unpack_c_schema(io, schema["item_schema"], context))
+                return tuple(items)
+            else:
+                count_field_name = count_schema["count_field_name"]
+                count_field_as_int = count_schema["count_field_as_int"]
+                item_schema = schema["item_schema"]
+                count = count_field_as_int(context["preceding_fields"][count_field_name])
+                return tuple(_unpack_c_schema(io, item_schema, context) for _ in range(count))
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -423,9 +438,9 @@ def _visit_model_fields(
 
 
 def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
-    if py_schema.get("variadic_item_index") is not None:
-        msg = "Variable length tuples are not supported without CCountField metadata"
-        raise ValueError(msg)
+    if (variadic_item_index := py_schema.get("variadic_item_index")) is not None:
+        _visit_variadic_tuple(variadic_item_index, py_schema, context)
+        return
 
     # Tuples are treated as anonymous structs
     c_schema = CStructSchema(
@@ -448,6 +463,34 @@ def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
     _check_c_struct_schema(field_schema, c_schema)
+
+
+def _visit_variadic_tuple(
+    variadic_item_index: int, py_schema: cs.TupleSchema, context: _VisitorContext
+) -> None:
+    if len(py_schema["items_schema"]) != 1:
+        msg = (
+            f"Tuple schemas with variadic_item_index must have exactly one item schema, "
+            f"got {len(py_schema['items_schema'])}"
+        )
+        raise ValueError(msg)
+    py_item_schema = py_schema["items_schema"][0]
+
+    if variadic_item_index != 0:
+        msg = "Tuple schemas with variadic_item_index must have variadic_item_index set to 0"
+        raise ValueError(msg)
+
+    c_item_field_schema = _placeholder_struct_field_schema(variable_length=True)
+    _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
+    c_array_schema = CArraySchema(
+        type="array",
+        count_schema=None,
+        item_schema=c_item_field_schema["schema"],
+        alignment=c_item_field_schema["schema"]["alignment"],
+    )
+
+    context["field_schema"]["schema"] = c_array_schema
+    context["field_schema"]["variable_length"] = True
 
 
 def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContext) -> None:
@@ -645,8 +688,11 @@ def _visit_c_count_field_metadata(
     _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
     c_array_schema = CArraySchema(
         type="array",
-        count_field_name=count_field_name,
-        count_field_as_int=c_count_field.count_field_value_as_int or int,
+        count_schema=CArrayCountSchema(
+            type="array-count",
+            count_field_name=count_field_name,
+            count_field_as_int=c_count_field.count_field_value_as_int or int,
+        ),
         item_schema=c_item_field_schema["schema"],
         alignment=c_item_field_schema["schema"]["alignment"],
     )

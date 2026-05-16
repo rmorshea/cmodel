@@ -686,3 +686,19 @@ def test_variable_length_tuple_from_bitmask():
     original.c_pack(buf)
     buf.seek(0)
     assert _VariableLengthArrayFromBitmask.c_unpack(buf) == original
+
+
+class _UnboundedLengthArray(CModel):
+    """Model with a variable-length tuple field that has no explicit count field."""
+
+    values: tuple[int, ...]
+
+
+def test_unbounded_length_tuple():
+    original = _UnboundedLengthArray(values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _UnboundedLengthArray.c_unpack(buf) == original
+    # check that the buffer is fully consumed, since there's no count field to determine the length
+    assert buf.read() == b""
