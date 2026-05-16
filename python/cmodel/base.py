@@ -11,9 +11,11 @@ from typing import Unpack
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import GetCoreSchemaHandler
+from pydantic import model_validator
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
+from cmodel.schema import CBuildContext
 from cmodel.schema import CEncoderSchema
 from cmodel.schema import CStructSchema
 from cmodel.schema import EndianType
@@ -40,6 +42,14 @@ class CModel(BaseModel):
     c_size_type: ClassVar[SizeType] = "native"
     """Override the size type of this struct. Native by default."""
 
+    _c_model_validators: ClassVar[dict[str, Callable[[Self], None]]] = {}
+    """A mapping of validator names to functions that take a completed model instance.
+
+    These are populated while constructing the c_schema for this model and run in the order
+    they were added. For example, a variable length tuple with a `CCountedBy` will add a
+    validator to ensure the length of the tuple matches the count field.
+    """
+
     def __init_subclass__(
         cls,
         *,
@@ -55,6 +65,8 @@ class CModel(BaseModel):
             cls.c_endian_type = c_endian_type
         if c_size_type is not None:
             cls.c_size_type = c_size_type
+        # avoid mutating the parent class' validators
+        cls._c_model_validators = cls._c_model_validators.copy()
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -86,6 +98,12 @@ class CModel(BaseModel):
         """Write this model instance to the current position of a binary buffer."""
         value = self.model_dump()
         pack_c_schema(buffer, self.c_schema, value)
+
+    @model_validator(mode="after")
+    def _c_model_validate(self) -> Self:
+        for check in self._c_model_validators.values():
+            check(self)
+        return self
 
 
 @dataclass
@@ -125,8 +143,8 @@ class CFormat[T]:
 class CEncoded[T]:
     """Pydantic annotated metadata declaring how to pack/unpack a value from a C encoded buffer."""
 
-    get_encoder: Callable[[EndianType, SizeType], CEncoderSchema[T]]
-    """A function that produces a CEncoder for this value given an endianness and size type."""
+    get_encoder: Callable[[CBuildContext], CEncoderSchema[T]]
+    """A function returning a CEncoderSchema for this value given an endianness and size type."""
 
     def __get_pydantic_core_schema__(
         self,
@@ -135,4 +153,68 @@ class CEncoded[T]:
     ) -> cs.CoreSchema:
         schema = handler(source)
         _utils.set_pydantic_schema_metadata(schema, {"c_encoded": self})
+        return schema
+
+
+@dataclass(kw_only=True)
+class CCountedBy:
+    """Pydantic annotated metadata defining the element count in a variable length array.
+
+    This should be used to annotate a variadic tuple (``tuple[T, ...]``) when the number
+    of elements is stored in another field. For example:
+
+    ```python
+    from typing import Annotated as An
+
+    from cmodel import CCountedBy
+    from cmodel import CModel
+
+
+    class MyModel(CModel):
+        values_count: int
+        values: An[tuple[int, ...], CCountedBy.name("values_count")]
+    ```
+
+    By contrast, a bare ``tuple[T, ...]`` with no ``CCountedBy`` is treated as an
+    unbounded trailing array that reads until the end of the buffer.
+    """
+
+    get_count_field_name: Callable[[CBuildContext], str]
+    """Return the field name containing the count of elements, given the name of the array field."""
+    count_field_value_as_int: Callable[[Any], int] | None = None
+    """Cast the value of the count field to an int."""
+
+    @classmethod
+    def name(cls, count_field_name: str, as_int: Callable[[Any], int] | None = None) -> Self:
+        """Create a CCountedBy with the given count field name."""
+        return cls(get_count_field_name=lambda _: count_field_name, count_field_value_as_int=as_int)
+
+    @classmethod
+    def template(cls, template_str: str, as_int: Callable[[Any], int] | None = None) -> Self:
+        """Create a CCountedBy with a template string for the count field name.
+
+        Args:
+            template_str:
+                The template string should contain one `{}` placeholder, which will be replaced
+                with the name of the array field to get the name of the count field. For example,
+                `CCountedByField. template("{}_count")` will create a CCountedByField that looks
+                for a count field named `<array_field_name>_count` for an array field named
+                `<array_field_name>`.
+            as_int:
+                An optional function to cast the value of the count field to an int. For example,
+                you might have a bitmask field where the count is stored as the number of set bits,
+                and you could pass `lambda x: x.bit_count()` to get the count.
+        """
+        return cls(
+            get_count_field_name=lambda build_ctx: template_str.format(build_ctx["field_name"]),
+            count_field_value_as_int=as_int,
+        )
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> cs.CoreSchema:
+        schema = handler(source)
+        _utils.set_pydantic_schema_metadata(schema, {"c_count_field": self})
         return schema

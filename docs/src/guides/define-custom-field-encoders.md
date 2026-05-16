@@ -45,21 +45,22 @@ from typing import Annotated
 
 from cmodel import CEncoded
 from cmodel import CModel
-from cmodel.schema import CEncoderSchema
+from cmodel.schema import CEncoderSchema, CBuildContext, SizeRange
 
 
-def uint24(endian: str, size: str) -> CEncoderSchema[int]:
-    byteorder = "little" if endian in ("native", "little") else "big"
+def uint24(build_ctx: CBuildContext) -> CEncoderSchema[int]:
+    byteorder = "little" if build_ctx["endian_type"] in ("native", "little") else "big"
 
-    def unpack(buf, _ctx):  # context unused for fixed-size fields
+    def unpack(buf, _unpack_ctx):  # don't need the context for fixed-size fields
         return int.from_bytes(buf.read(3), byteorder)
 
-    def pack(buf, value, _ctx):  # context unused for fixed-size fields
+    def pack(buf, value, _pack_ctx):  # don't need the context for fixed-size fields
         buf.write(value.to_bytes(3, byteorder))
 
     return CEncoderSchema[int](
         type="encoder",
         size=3,
+        size_range=SizeRange.FIXED,
         alignment=1,
         unpack=unpack,
         pack=pack,
@@ -67,7 +68,7 @@ def uint24(endian: str, size: str) -> CEncoderSchema[int]:
     )
 
 
-UInt24 = Annotated[int, CEncoded(get_encoder=uint24)]
+UInt24 = Annotated[int, CEncoded(uint24)]
 
 
 class AudioSample(CModel):
@@ -111,56 +112,3 @@ class BigEndianSample(CModel, c_endian_type="big"):
 
 The `uint24` factory will be called with `endian="big"`, so it writes the three bytes
 in big-endian order.
-
-## Read preceding fields from context
-
-The `unpack` function receives a [`CUnpackContext`][cmodel.schema.CUnpackContext] as
-its second argument, and `pack` receives a [`CPackContext`][cmodel.schema.CPackContext]
-as its third. When the field you're encoding depends on an earlier field in the same
-struct, read it from `CUnpackContext.preceding_fields`.
-
-A common case is a **length-prefixed array** — a pattern seen frequently in network
-protocols and binary file formats:
-
-```c
-uint8_t array_length;
-uint8_t array_data[];
-```
-
-```python
-from typing import Annotated
-
-from cmodel import CEncoded, CModel
-from cmodel.schema import CEncoderSchema
-from cmodel.types import UnsignedChar
-
-
-def sized_bytes(endian: str, size: str) -> CEncoderSchema[bytes]:
-    return CEncoderSchema[bytes](
-        type="encoder",
-        size=None,  # variable length
-        alignment=1,
-        unpack=lambda buf, ctx: buf.read(ctx["preceding_fields"]["array_length"]),
-        pack=lambda buf, value, _ctx: buf.write(value),
-        schema_equality_info=("example", "sized_bytes"),
-    )
-
-
-SizedBytes = Annotated[bytes, CEncoded(get_encoder=sized_bytes)]
-
-
-class ArrayPacket(CModel):
-    array_length: UnsignedChar
-    array_data: SizedBytes
-```
-
-`ArrayPacket.c_unpack(buf)` reads one byte as the length, then reads exactly that many
-bytes into `array_data`. Because `array_data` is variable length (`size=None`), it must
-be the last field in the struct.
-
-The `pack` function ignores context here. The caller is responsible for keeping
-`array_length` consistent with `len(array_data)`.
-
-For `pack`, [`CPackContext`][cmodel.schema.CPackContext] gives you `struct_schema` and
-`field_name` but does not carry a `preceding_fields` mapping, since fields may be
-packed in any order by the caller.

@@ -5,9 +5,11 @@ from collections.abc import Callable
 from typing import Annotated as An
 from uuid import UUID
 
+from cmodel.base import CCountedBy
 from cmodel.base import CEncoded
 from cmodel.base import CFormat
 from cmodel.schema import CEncoderSchema
+from cmodel.schema import SizeRange
 
 
 def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFormat[T]]:
@@ -120,10 +122,11 @@ def c_char(count: int) -> CFormat:
 type RawBytes = An[
     bytes,
     CEncoded(
-        get_encoder=lambda e, s: CEncoderSchema[bytes](
+        get_encoder=lambda _: CEncoderSchema[bytes](
             type="encoder",
             alignment=1,
             size=None,
+            size_range=SizeRange.UNBOUNDED,
             unpack=lambda buffer, _: buffer.read(),
             pack=lambda buffer, value, _: buffer.write(value),
             schema_equality_info=(__name__, "ByteArray"),
@@ -134,4 +137,13 @@ type RawBytes = An[
 
 Should be the last field in a model, as it reads from the current
 position to the end of the buffer.
+"""
+
+
+type CountedArray[T] = An[tuple[T, ...], CCountedBy.template("{}_count")]
+"""Annotated metadata for an array of items of type T whose length is bounded by another field.
+
+The field containing the count of items should be named `{field_name}_count` where `{field_name}`
+is the name of the array field. For example, `values: CountedArray[int]` expects a preceding
+`values_count: int` field containing the number of ints in the array.
 """

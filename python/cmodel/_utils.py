@@ -7,6 +7,7 @@ from typing import TypedDict
 from pydantic_core import core_schema as cs
 
 if TYPE_CHECKING:
+    from cmodel.base import CCountedBy
     from cmodel.base import CEncoded
     from cmodel.base import CFormat
     from cmodel.schema import CStructFieldSchema
@@ -20,6 +21,8 @@ class PydanticSchemaMetadata[T](TypedDict, total=False):
     """The CEncoded metadata for this schema, if it exists."""
     c_format: "CFormat[T]"
     """The CFormat metadata for this schema, if it exists."""
+    c_count_field: "CCountedBy"
+    """The CCountedBy metadata for this schema, if it exists."""
 
 
 def get_pydantic_schema_metadata(schema: cs.CoreSchema) -> PydanticSchemaMetadata | None:

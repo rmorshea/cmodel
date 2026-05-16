@@ -8,9 +8,12 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
+from cmodel.base import CCountedBy
 from cmodel.base import CEncoded
 from cmodel.base import CModel
+from cmodel.schema import CBuildContext
 from cmodel.schema import CEncoderSchema
+from cmodel.schema import SizeRange
 from cmodel.types import Bool
 from cmodel.types import Double
 from cmodel.types import Float
@@ -18,7 +21,6 @@ from cmodel.types import Int
 from cmodel.types import RawBytes
 from cmodel.types import Short
 from cmodel.types import SignedChar
-from cmodel.types import UnsignedChar
 from cmodel.types import c_int
 from cmodel.types import c_short
 
@@ -425,13 +427,14 @@ def test_c_encoded_raw_bytes_empty_trailing():
 def test_c_encoded_custom_encoder():
     """CEncoded with custom fixed-size encoder that doubles an int on pack and halves on unpack."""
 
-    def make_encoder(endian: str, size: str) -> CEncoderSchema[int]:
-        prefix = {"native": "@", "little": "<", "big": ">"}[endian]
+    def make_encoder(build_ctx: CBuildContext) -> CEncoderSchema[int]:
+        prefix = {"native": "@", "little": "<", "big": ">"}[build_ctx["endian_type"]]
         fmt = struct.Struct(f"{prefix}i")
         return CEncoderSchema[int](
             type="encoder",
             alignment=fmt.size,
             size=fmt.size,
+            size_range=SizeRange.FIXED,
             unpack=lambda buf, _: fmt.unpack(buf.read(fmt.size))[0] // 2,
             pack=lambda buf, v, _: buf.write(fmt.pack(v * 2)),
             schema_equality_info=("test", "doubler"),
@@ -455,14 +458,15 @@ def test_c_encoded_receives_endian_and_size_type():
     """Verify encoder factory receives struct's endian_type and size_type."""
     captured = {}
 
-    def capturing_encoder(endian: str, size: str) -> CEncoderSchema[int]:
-        captured["endian"] = endian
-        captured["size"] = size
+    def capturing_encoder(build_ctx: CBuildContext) -> CEncoderSchema[int]:
+        captured["endian"] = build_ctx["endian_type"]
+        captured["size"] = build_ctx["size_type"]
         fmt = struct.Struct("<i")
         return CEncoderSchema[int](
             type="encoder",
             alignment=4,
             size=4,
+            size_range=SizeRange.FIXED,
             unpack=lambda buf, _: fmt.unpack(buf.read(4))[0],
             pack=lambda buf, v, _: buf.write(fmt.pack(v)),
             schema_equality_info=("test", "capture"),
@@ -599,58 +603,6 @@ def test_short_double_roundtrip():
     assert ShortDoubleModel.c_unpack(buf) == original
 
 
-# ---------------------------------------------------------------------------
-# Context-aware encoder: length-prefixed (sized) array
-# Models the C pattern:  uint8_t array_length; uint8_t array_data[];
-# The unpack function reads `array_length` from preceding_fields to know
-# how many bytes to consume, demonstrating CUnpackContext usage.
-# ---------------------------------------------------------------------------
-
-
-def _sized_bytes_encoder(endian: str, size: str) -> CEncoderSchema[bytes]:
-    return CEncoderSchema[bytes](
-        type="encoder",
-        size=None,
-        alignment=1,
-        unpack=lambda buf, ctx: buf.read(ctx["preceding_fields"]["array_length"]),
-        pack=lambda buf, value, _ctx: buf.write(value),
-        schema_equality_info=("test", "sized_bytes"),
-    )
-
-
-class _SizedArrayModel(CModel):
-    array_length: UnsignedChar
-    array_data: An[bytes, CEncoded(get_encoder=_sized_bytes_encoder)]
-
-
-def test_sized_array_unpack_reads_length_from_context():
-    data = b"\x03\xaa\xbb\xcc"
-    result = _SizedArrayModel.c_unpack(BytesIO(data))
-    assert result.array_length == 3
-    assert result.array_data == b"\xaa\xbb\xcc"
-
-
-def test_sized_array_unpack_empty():
-    data = b"\x00"
-    result = _SizedArrayModel.c_unpack(BytesIO(data))
-    assert result.array_length == 0
-    assert result.array_data == b""
-
-
-def test_sized_array_pack():
-    buf = BytesIO()
-    _SizedArrayModel(array_length=3, array_data=b"\xaa\xbb\xcc").c_pack(buf)
-    assert buf.getvalue() == b"\x03\xaa\xbb\xcc"
-
-
-def test_sized_array_roundtrip():
-    original = _SizedArrayModel(array_length=4, array_data=b"\x01\x02\x03\x04")
-    buf = BytesIO()
-    original.c_pack(buf)
-    buf.seek(0)
-    assert _SizedArrayModel.c_unpack(buf) == original
-
-
 class InnerMixed(CModel):
     """char(1) + double(8) — inner struct has 8-byte alignment."""
 
@@ -699,3 +651,57 @@ def test_nested_mixed_alignment_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert OuterMixed.c_unpack(buf) == original
+
+
+class _VariableLengthArray(CModel):
+    """Model with a variable-length tuple field, where the count is determined by another field."""
+
+    values_count: Int
+    values: An[tuple[int, ...], CCountedBy.name("values_count")]
+
+
+def test_variable_length_tuple():
+    original = _VariableLengthArray(values_count=3, values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _VariableLengthArray.c_unpack(buf) == original
+
+
+def test_handling_incorrect_tuple_length():
+    with pytest.raises(ValueError, match="Length of values must be equal to values_count"):
+        _VariableLengthArray(values_count=2, values=(10, 20, 30))
+
+
+class _VariableLengthArrayFromBitmask(CModel):
+    """Model with a variable-length tuple field, where the count comes from a bitmask of flags."""
+
+    values_mask: Int
+    values: An[
+        tuple[int, ...],
+        CCountedBy.name("values_mask", as_int=int.bit_count),
+    ]
+
+
+def test_variable_length_tuple_from_bitmask():
+    original = _VariableLengthArrayFromBitmask(values_mask=0b1011, values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _VariableLengthArrayFromBitmask.c_unpack(buf) == original
+
+
+class _UnboundedLengthArray(CModel):
+    """Model with a variable-length tuple field that has no explicit count field."""
+
+    values: tuple[int, ...]
+
+
+def test_unbounded_length_tuple():
+    original = _UnboundedLengthArray(values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _UnboundedLengthArray.c_unpack(buf) == original
+    # check that the buffer is fully consumed, since there's no count field to determine the length
+    assert buf.read() == b""

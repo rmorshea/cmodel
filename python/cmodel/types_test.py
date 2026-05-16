@@ -7,6 +7,7 @@ import pytest
 
 from cmodel.base import CModel
 from cmodel.types import Bool
+from cmodel.types import CountedArray
 from cmodel.types import Double
 from cmodel.types import Float
 from cmodel.types import Int
@@ -273,3 +274,16 @@ def test_raw_bytes_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert _RawBytesModel.c_unpack(buf) == original
+
+
+class _CountedArrayModel(CModel):
+    values_count: Int
+    values: CountedArray[Int]
+
+
+def test_counted_array():
+    original = _CountedArrayModel(values_count=3, values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _CountedArrayModel.c_unpack(buf) == original

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Mapping
+from enum import IntEnum
 from io import BytesIO
 from operator import itemgetter
 from struct import Struct
@@ -28,6 +29,17 @@ type EndianType = Literal["native", "little", "big", "network"]
 """The endianness of a C format."""
 type SizeType = Literal["standard", "native"]
 """Whether to use standard sizes for C types or native sizes."""
+
+
+class SizeRange(IntEnum):
+    """Describes whether a size is fixed, unbounded, or bounded."""
+
+    FIXED = 0
+    """Size is fixed and known at compile time."""
+    BOUNDED = 1
+    """Size is variable but bounded, perhaps by another field in a struct."""
+    UNBOUNDED = 2
+    """Size is variable and unbounded, unbounded size fields must be last in a struct."""
 
 
 type Prefix = Literal["@", "=", "<", ">", "!"]
@@ -72,10 +84,23 @@ class CUnpackContext(TypedDict):
 
     struct_schema: "CStructSchema"
     """The schema of the struct currently being packed."""
-    preceding_fields: Mapping[str, Any]
-    """The fields that have been unpacked so far in the current struct, keyed by field name."""
     field_name: str
     """The name of the field being unpacked."""
+    preceding_fields: Mapping[str, Any]
+    """A mapping of the preceding fields in the struct to their unpacked values, used for."""
+
+
+class CBuildContext(TypedDict):
+    """Context passed to functions that build C schemas."""
+
+    endian_type: EndianType
+    """The endianness of the current struct being encoded."""
+    size_type: SizeType
+    """Whether the current struct being encoded uses standard sizes for C types or native sizes."""
+    field_name: str
+    """The name of the field for which the schema is being built."""
+    struct_schema: "CStructSchema"
+    """The schema of the struct for which the schema is being built."""
 
 
 class CEncoderSchema[T](TypedDict):
@@ -84,7 +109,9 @@ class CEncoderSchema[T](TypedDict):
     type: Literal["encoder"]
 
     size: int | None
-    """The size of this value in bytes - None if variable length."""
+    """The size of this value in bytes - None if bounded or unbounded length."""
+    size_range: SizeRange
+    """Whether this value has a fixed size, variable but bounded size, or unbounded size."""
     alignment: int
     """The alignment requirement of this value in bytes."""
     unpack: Callable[[BytesIO, CUnpackContext], T]
@@ -95,6 +122,30 @@ class CEncoderSchema[T](TypedDict):
     """A value used to determine if two CEncoderSchemas are equal."""
 
 
+class CArrayCountSchema(TypedDict):
+    """A schema for a count field that determines the number of elements in a C array."""
+
+    type: Literal["array-count"]
+
+    count_field_name: str
+    """The name of the field that contains the count of elements in the array."""
+    count_field_as_int: Callable[[Any], int]
+    """A function to interpret the count field value as an int."""
+
+
+class CArraySchema(TypedDict):
+    """A schema for a C array, which is just a wrapper around another C schema with a count."""
+
+    type: Literal["array"]
+
+    count_schema: CArrayCountSchema | None
+    """How to determine the number of elements in this array, or None if unbounded."""
+    item_schema: "CSchema"
+    """The schema for each element in the array."""
+    alignment: int
+    """The alignment requirement of this array in bytes."""
+
+
 class CStructFieldSchema(TypedDict):
     """A schema for a single field in a C struct."""
 
@@ -102,8 +153,8 @@ class CStructFieldSchema(TypedDict):
 
     schema: "CSchema"
     """The schema for this field, which may be a CFormatSchema for a simple field or a nested"""
-    variable_length: bool
-    """Whether this field consumes the rest of the buffer when unpacking."""
+    size_range: SizeRange
+    """Whether this fields size is fixed, unbounded, or bounded."""
 
 
 class CTaggedUnionSchema(TypedDict):
@@ -140,7 +191,7 @@ class CStructSchema(TypedDict):
     """The CModel class that this schema corresponds to."""
 
 
-type CSchema = CStructSchema | CEncoderSchema | CTaggedUnionSchema
+type CSchema = CStructSchema | CEncoderSchema | CTaggedUnionSchema | CArraySchema
 """Any C schema"""
 
 
@@ -151,8 +202,8 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
         schema,
         {
             "field_name": "",
-            "preceding_fields": {},
             "struct_schema": _placeholder_struct_schema(anonymous=True),
+            "preceding_fields": {},
         },
     )
 
@@ -169,7 +220,7 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 tuple_values: list[Any] = []
                 field_list = tuple(field_schemas.values())
                 # anonymous struct can't refer to preceding fields by name
-                context = {"struct_schema": schema, "preceding_fields": {}, "field_name": ""}
+                context = {"struct_schema": schema, "field_name": "", "preceding_fields": {}}
                 for idx, s in enumerate(field_list):
                     tuple_values.append(_unpack_c_schema(io, s["schema"], context))
                     io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
@@ -178,8 +229,8 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 dict_values: dict[str, Any] = {}
                 context = {
                     "struct_schema": schema,
-                    "preceding_fields": dict_values,
                     "field_name": "",  # placeholder, will be set correctly in loop
+                    "preceding_fields": dict_values,
                 }
                 field_list = tuple(field_schemas.values())
                 for idx, (f, s) in enumerate(field_schemas.items()):
@@ -203,6 +254,18 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
             return _unpack_c_schema(io, variant_schema, context)
+        case "array":
+            if (count_schema := schema["count_schema"]) is None:
+                items = []
+                while io.tell() < len(io.getbuffer()):
+                    items.append(_unpack_c_schema(io, schema["item_schema"], context))
+                return tuple(items)
+            else:
+                count_field_name = count_schema["count_field_name"]
+                count_field_as_int = count_schema["count_field_as_int"]
+                item_schema = schema["item_schema"]
+                count = count_field_as_int(context["preceding_fields"][count_field_name])
+                return tuple(_unpack_c_schema(io, item_schema, context) for _ in range(count))
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
@@ -250,19 +313,31 @@ def _pack_c_schema(io: BytesIO, schema: CSchema, value: Any, context: CPackConte
                 msg = f"Invalid tag value {tag_value} for tagged union"
                 raise ValueError(msg)
             _pack_c_schema(io, variant_schema, value, context)
+        case "array":
+            item_schema = schema["item_schema"]
+            for item in value:
+                _pack_c_schema(io, item_schema, item, context)
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
 
 
 def c_schema_from_pydantic_core_schema(
-    core_schema: cs.CoreSchema,
+    py_schema: cs.CoreSchema,
     handler: GetCoreSchemaHandler,
 ) -> CSchema:
     """Convert a Pydantic core schema to a CModel schema."""
     struct_schema = _placeholder_struct_schema()
     field_schema = _placeholder_struct_field_schema()
-    _visit(core_schema, handler, {"struct_schema": struct_schema, "field_schema": field_schema})
+    _visit(
+        py_schema,
+        {
+            "struct_schema": struct_schema,
+            "field_name": "",
+            "field_schema": field_schema,
+            "pydantic_handler": handler,
+        },
+    )
     return field_schema["schema"]
 
 
@@ -271,33 +346,33 @@ class _VisitorContext(TypedDict):
 
     struct_schema: CStructSchema
     """The schema of the struct currently being visited."""
+    field_name: str
+    """The name of the field currently being visited, used for error messages."""
     field_schema: CStructFieldSchema
     """The schema of the current field being visited."""
+    pydantic_handler: GetCoreSchemaHandler
+    """The handler to resolve references to other schemas."""
 
 
 def _visit(
     py_schema: cs.CoreSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
     if metadata := _utils.get_pydantic_schema_metadata(py_schema):
-        c_schema = _encoder_schema_from_pydantic_metadata(metadata, context)
-        context["field_schema"]["schema"] = c_schema
-        if c_schema["size"] is None:
-            context["field_schema"]["variable_length"] = True
+        _visit_pydantic_metadata(metadata, py_schema, context)
         return
     match py_schema["type"]:
         case "model":
-            _visit_model(py_schema, handler, context)
+            _visit_model(py_schema, context)
         case "model-fields":
-            _visit_model_fields(py_schema, handler, context)
+            _visit_model_fields(py_schema, context)
         case "tuple":
-            _visit_tuple(py_schema, handler, context)
+            _visit_tuple(py_schema, context)
         case "tagged-union":
-            _visit_tagged_union(py_schema, handler, context)
+            _visit_tagged_union(py_schema, context)
         case "default":
-            _visit(py_schema["schema"], handler, context)
+            _visit(py_schema["schema"], context)
         case "int":
             c_schema = _simple_format_schema("i", context)
             context["field_schema"]["schema"] = c_schema
@@ -316,9 +391,15 @@ def _visit(
         case "definition-ref":
             # TODO: use a similar ref schema mechanism that Pydantic does - if we've seen the
             # reference ID we should be able to reuse the same CSchema object.
-            py_schema = handler.resolve_ref_schema(py_schema)
-            _visit(py_schema, handler, context)
-        # pass on allowed schema types
+            py_schema = context["pydantic_handler"].resolve_ref_schema(py_schema)
+            _visit(py_schema, context)
+        # some Pydantic schemas wrap others and have no effect on the C representation
+        case "function-after" | "function-before" | "function-wrap":
+            _visit(py_schema["schema"], context)
+        # some Pydantic schemas have no effect at all on the C representation and can be ignored
+        case "function-plain":
+            pass
+        # all remaining Pydantic schemas are not supported or have no clear C representation
         case _:
             msg = f"Unsupported schema type: {py_schema['type']}"
             raise TypeError(msg)
@@ -326,7 +407,6 @@ def _visit(
 
 def _visit_model(
     py_schema: cs.ModelSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     if not issubclass(cls := py_schema["cls"], cmodel.CModel):
@@ -348,8 +428,12 @@ def _visit_model(
 
     _visit(
         py_schema["schema"],
-        handler,
-        {"struct_schema": c_schema, "field_schema": _placeholder_struct_field_schema()},
+        {
+            "struct_schema": c_schema,
+            "field_name": context["field_name"],
+            "field_schema": _placeholder_struct_field_schema(),
+            "pydantic_handler": context["pydantic_handler"],
+        },
     )
 
     c_field_schemas = c_schema["field_schemas"].values()
@@ -360,32 +444,19 @@ def _visit_model(
 
 def _visit_model_fields(
     py_schema: cs.ModelFieldsSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     struct_schema = context["struct_schema"]
     for f_name, py_f_schema in py_schema["fields"].items():
-        c_f_schema = _placeholder_struct_field_schema(
-            variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False)
-        )
+        c_f_schema = _placeholder_struct_field_schema()
         struct_schema["field_schemas"][f_name] = c_f_schema
-        _visit(
-            py_f_schema["schema"],
-            handler,
-            {**context, "field_schema": c_f_schema},
-        )
+        _visit(py_f_schema["schema"], {**context, "field_name": f_name, "field_schema": c_f_schema})
 
 
-def _visit_tuple(
-    py_schema: cs.TupleSchema,
-    handler: GetCoreSchemaHandler,
-    context: _VisitorContext,
-) -> None:
-    py_items_schema = py_schema["items_schema"]
-    variadic_item_index = py_schema.get("variadic_item_index", -1)
-    if variadic_item_index >= 0 and variadic_item_index + 1 != len(py_items_schema):
-        msg = "CModel does not support variadic tuples"
-        raise ValueError(msg)
+def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
+    if (variadic_item_index := py_schema.get("variadic_item_index")) is not None:
+        _visit_variadic_tuple(variadic_item_index, py_schema, context)
+        return
 
     # Tuples are treated as anonymous structs
     c_schema = CStructSchema(
@@ -401,24 +472,44 @@ def _visit_tuple(
     field_schema["schema"] = c_schema
 
     for i, item_schema in enumerate(py_schema["items_schema"]):
-        c_f_schema = _placeholder_struct_field_schema(variable_length=i == variadic_item_index)
+        c_f_schema = _placeholder_struct_field_schema()
         c_schema["field_schemas"][str(i)] = c_f_schema
-        _visit(
-            item_schema,
-            handler,
-            {**context, "field_schema": c_f_schema},
-        )
+        _visit(item_schema, {**context, "field_schema": c_f_schema})
 
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
     _check_c_struct_schema(field_schema, c_schema)
 
 
-def _visit_tagged_union(
-    py_schema: cs.TaggedUnionSchema,
-    handler: GetCoreSchemaHandler,
-    context: _VisitorContext,
+def _visit_variadic_tuple(
+    variadic_item_index: int, py_schema: cs.TupleSchema, context: _VisitorContext
 ) -> None:
+    if len(py_schema["items_schema"]) != 1:
+        msg = (
+            f"Tuple schemas with variadic_item_index must have exactly one item schema, "
+            f"got {len(py_schema['items_schema'])}"
+        )
+        raise ValueError(msg)
+    py_item_schema = py_schema["items_schema"][0]
+
+    if variadic_item_index != 0:
+        msg = "Tuple schemas with variadic_item_index must have variadic_item_index set to 0"
+        raise ValueError(msg)
+
+    c_item_field_schema = _placeholder_struct_field_schema()
+    _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
+    c_array_schema = CArraySchema(
+        type="array",
+        count_schema=None,
+        item_schema=c_item_field_schema["schema"],
+        alignment=c_item_field_schema["schema"]["alignment"],
+    )
+
+    context["field_schema"]["schema"] = c_array_schema
+    context["field_schema"]["size_range"] = SizeRange.UNBOUNDED
+
+
+def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContext) -> None:
     if not isinstance(tag_field := py_schema["discriminator"], str):
         msg = f"Only string discriminators are supported for tagged unions, got {tag_field}"
         raise TypeError(msg)
@@ -427,16 +518,14 @@ def _visit_tagged_union(
     c_choice_fields: Mapping[Hashable, CStructFieldSchema] = {}
     for py_choice_value, py_choice_schema in py_schema["choices"].items():
         fake_field = _placeholder_struct_field_schema()  # captures the choice schema
-        _visit(py_choice_schema, handler, {**context, "field_schema": fake_field})
+        _visit(py_choice_schema, {**context, "field_schema": fake_field})
         c_choice_fields[py_choice_value] = fake_field
     if not c_choice_fields:
         msg = "Tagged unions must have at least one variant"
         raise ValueError(msg)
 
-    # The above mechanism allows us to check whether the choices are variable length or not.
-    variable_length_values = [c["variable_length"] for c in c_choice_fields.values()]
-    if any(variable_length_values):
-        context["field_schema"]["variable_length"] = True
+    # The above mechanism allows us to get the overall size range of the tagged union
+    context["field_schema"]["size_range"] = max(c["size_range"] for c in c_choice_fields.values())
 
     # Now we can build the tagged union schema using the captured choice schemas.
     c_choices = {k: v["schema"] for k, v in c_choice_fields.items()}
@@ -489,15 +578,24 @@ def _make_uuid_schema(context: _VisitorContext) -> CEncoderSchema:
 
 
 def _check_c_struct_schema(
-    field_schema: CStructFieldSchema,
+    owner_field_schema: CStructFieldSchema,
     c_schema: CStructSchema,
 ) -> None:
-    for f_index, f_schema in enumerate(c_schema["field_schemas"].values()):
-        if f_schema["variable_length"]:
-            if f_index != len(c_schema["field_schemas"]) - 1:
-                msg = "Variable length fields must be the last field in a struct"
-                raise ValueError(msg)
-            field_schema["variable_length"] = True
+    if not c_schema["field_schemas"]:
+        return
+
+    *first_field_schemas_items, _ = c_schema["field_schemas"].items()
+    for f_name, f_schema in first_field_schemas_items:
+        if f_schema["size_range"] == SizeRange.UNBOUNDED:
+            msg = (
+                f"Unbounded variable length field '{f_name}' must be the last "
+                f"field in {_get_struct_name(c_schema)}"
+            )
+            raise ValueError(msg)
+
+    owner_field_schema["size_range"] = max(
+        s["size_range"] for s in c_schema["field_schemas"].values()
+    )
 
 
 def _simple_format_schema(fmt: str, context: _VisitorContext) -> CEncoderSchema:
@@ -512,19 +610,124 @@ def _simple_format_schema(fmt: str, context: _VisitorContext) -> CEncoderSchema:
     )
 
 
-def _encoder_schema_from_pydantic_metadata(
-    metadata: _utils.PydanticSchemaMetadata, context: _VisitorContext
-) -> CEncoderSchema:
-    """Convert a CFormatSchema from the metadata on a Pydantic core schema."""
+def _visit_pydantic_metadata(
+    metadata: _utils.PydanticSchemaMetadata,
+    py_schema: cs.CoreSchema,
+    context: _VisitorContext,
+) -> None:
+    """Visit a Pydantic core schema with CModel metadata."""
     match metadata:
         case {"c_encoded": c_encoded}:
-            struct_schema = context["struct_schema"]
-            return c_encoded.get_encoder(struct_schema["endian_type"], struct_schema["size_type"])
+            _visit_c_encoded_metadata(c_encoded, context)
         case {"c_format": c_format}:
-            return _encoder_schema_from_c_format(c_format, context)
+            _visit_c_format_metadata(c_format, context)
+        case {"c_count_field": c_count_field}:
+            _visit_c_count_field_metadata(c_count_field, py_schema, context)
         case _:
             msg = f"Unsupported CModel metadata: {metadata}"
             raise TypeError(msg)
+
+
+def _visit_c_encoded_metadata(
+    c_encoded: "cmodel.CEncoded",
+    context: _VisitorContext,
+) -> None:
+    c_schema = c_encoded.get_encoder({
+        "endian_type": context["struct_schema"]["endian_type"],
+        "size_type": context["struct_schema"]["size_type"],
+        "field_name": context["field_name"],
+        "struct_schema": context["struct_schema"],
+    })
+    context["field_schema"]["schema"] = c_schema
+    context["field_schema"]["size_range"] = c_schema["size_range"]
+    if c_schema["size"] is not None and c_schema["size_range"] != SizeRange.FIXED:
+        msg = "CEncoded schemas with a known size must have size_range set to SizeRange.FIXED"
+        raise ValueError(msg)
+
+
+def _visit_c_format_metadata(
+    c_format: "cmodel.CFormat",
+    context: _VisitorContext,
+) -> None:
+    c_schema = _encoder_schema_from_c_format(c_format, context)
+    context["field_schema"]["schema"] = c_schema
+    # CFormat always has a fixed size
+    context["field_schema"]["size_range"] = SizeRange.FIXED
+
+
+def _visit_c_count_field_metadata(
+    c_count_field: "cmodel.CCountedBy",
+    py_schema: cs.CoreSchema,
+    context: _VisitorContext,
+) -> None:
+    if py_schema["type"] != "tuple":
+        msg = "CCountedBy metadata can only be applied to tuple schemas"
+        raise TypeError(msg)
+
+    if len(py_schema["items_schema"]) != 1:
+        msg = (
+            f"Tuple schemas with CCountedBy metadata must "
+            f"have exactly one item schema, got {len(py_schema['items_schema'])}"
+        )
+        raise ValueError(msg)
+    py_item_schema = py_schema["items_schema"][0]
+
+    if py_schema.get("variadic_item_index") != 0:
+        msg = "Tuple schemas with CCountedBy metadata must be variable length."
+        raise ValueError(msg)
+
+    if (struct_schema_cls := context["struct_schema"].get("cls")) is None:
+        msg = (
+            "CCountedBy metadata cannot be applied to anonymous structs "
+            "because the count field cannot be referenced by name."
+        )
+        raise ValueError(msg)
+
+    field_name = context["field_name"]
+    count_field_name = c_count_field.get_count_field_name({
+        "field_name": field_name,
+        "struct_schema": context["struct_schema"],
+        "endian_type": context["struct_schema"]["endian_type"],
+        "size_type": context["struct_schema"]["size_type"],
+    })
+    if count_field_name not in context["struct_schema"]["field_schemas"]:
+        struct_schema = context["struct_schema"]
+        msg = (
+            f"Count field {count_field_name} not found in struct schema for "
+            f"{_get_struct_name(struct_schema)}"
+        )
+        raise ValueError(msg)
+
+    count_field_as_int = c_count_field.count_field_value_as_int or int
+
+    def model_validator(model: "cmodel.CModel") -> None:
+        count = count_field_as_int(getattr(model, count_field_name))
+        items = getattr(model, field_name)
+        if len(items) != count:
+            msg = (
+                f"Length of {field_name} must be equal to {count_field_name}, "
+                f"got {len(items)} and {count} respectively"
+            )
+            raise ValueError(msg)
+
+    validator_name = f"c_count_field_{field_name}"
+    struct_schema_cls._c_model_validators[validator_name] = model_validator  # noqa: SLF001
+
+    c_item_field_schema = _placeholder_struct_field_schema()
+    _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
+    c_array_schema = CArraySchema(
+        type="array",
+        count_schema=CArrayCountSchema(
+            type="array-count",
+            count_field_name=count_field_name,
+            count_field_as_int=c_count_field.count_field_value_as_int or int,
+        ),
+        item_schema=c_item_field_schema["schema"],
+        alignment=c_item_field_schema["schema"]["alignment"],
+    )
+
+    context["field_schema"]["schema"] = c_array_schema
+    context["field_schema"]["size_range"] = SizeRange.BOUNDED
 
 
 def _encoder_schema_from_c_format(
@@ -548,6 +751,7 @@ def _encoder_schema_from_c_format(
     return CEncoderSchema(
         type="encoder",
         size=fmt_size,
+        size_range=SizeRange.FIXED,
         alignment=_utils.get_format_alignment(prefix, c_format.format),
         unpack=lambda io, _: c_format.validate(fmt_unpack(io.read(fmt_size))),
         pack=lambda io, value, _: io.write(fmt_pack(*c_format.dump(value))),
@@ -572,13 +776,13 @@ def _placeholder_struct_schema(
     )
 
 
-def _placeholder_struct_field_schema(*, variable_length: bool = False) -> CStructFieldSchema:
+def _placeholder_struct_field_schema() -> CStructFieldSchema:
     """Return a placeholder CStructFieldSchema that can be used to build up a CStructSchema."""
     return CStructFieldSchema(
         type="struct-field",
         # The schema needs to be filled in later by a visitor
         schema=None,  # pyright: ignore[reportArgumentType]
-        variable_length=variable_length,
+        size_range=SizeRange.FIXED,  # placeholder, will be updated by visitor if needed
     )
 
 
@@ -606,3 +810,11 @@ def _next_padding(
         else struct_align
     )
     return (next_align - (position % next_align)) % next_align
+
+
+def _get_struct_name(struct_schema: CStructSchema) -> str:
+    """Get the name of a struct schema for error messages."""
+    if cls := struct_schema.get("cls"):
+        return cls.__name__
+    else:
+        return "anonymous struct"
