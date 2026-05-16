@@ -78,6 +78,15 @@ class CUnpackContext(TypedDict):
     """The name of the field being unpacked."""
 
 
+class CSchemaBuildContext(TypedDict):
+    """Context passed to functions that build C schemas."""
+
+    endian_type: EndianType
+    """The endianness of the current struct being encoded."""
+    size_type: SizeType
+    """Whether the current struct being encoded uses standard sizes for C types or native sizes."""
+
+
 class CEncoderSchema[T](TypedDict):
     """An object that can pack and unpack a value to and from a binary buffer."""
 
@@ -256,13 +265,20 @@ def _pack_c_schema(io: BytesIO, schema: CSchema, value: Any, context: CPackConte
 
 
 def c_schema_from_pydantic_core_schema(
-    core_schema: cs.CoreSchema,
+    py_schema: cs.CoreSchema,
     handler: GetCoreSchemaHandler,
 ) -> CSchema:
     """Convert a Pydantic core schema to a CModel schema."""
     struct_schema = _placeholder_struct_schema()
     field_schema = _placeholder_struct_field_schema()
-    _visit(core_schema, handler, {"struct_schema": struct_schema, "field_schema": field_schema})
+    _visit(
+        py_schema,
+        {
+            "struct_schema": struct_schema,
+            "field_schema": field_schema,
+            "pydantic_handler": handler,
+        },
+    )
     return field_schema["schema"]
 
 
@@ -273,11 +289,12 @@ class _VisitorContext(TypedDict):
     """The schema of the struct currently being visited."""
     field_schema: CStructFieldSchema
     """The schema of the current field being visited."""
+    pydantic_handler: GetCoreSchemaHandler
+    """The handler to resolve references to other schemas."""
 
 
 def _visit(
     py_schema: cs.CoreSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     """Visitor function to convert a Pydantic core schema to a CModel schema."""
@@ -289,15 +306,15 @@ def _visit(
         return
     match py_schema["type"]:
         case "model":
-            _visit_model(py_schema, handler, context)
+            _visit_model(py_schema, context)
         case "model-fields":
-            _visit_model_fields(py_schema, handler, context)
+            _visit_model_fields(py_schema, context)
         case "tuple":
-            _visit_tuple(py_schema, handler, context)
+            _visit_tuple(py_schema, context)
         case "tagged-union":
-            _visit_tagged_union(py_schema, handler, context)
+            _visit_tagged_union(py_schema, context)
         case "default":
-            _visit(py_schema["schema"], handler, context)
+            _visit(py_schema["schema"], context)
         case "int":
             c_schema = _simple_format_schema("i", context)
             context["field_schema"]["schema"] = c_schema
@@ -316,8 +333,8 @@ def _visit(
         case "definition-ref":
             # TODO: use a similar ref schema mechanism that Pydantic does - if we've seen the
             # reference ID we should be able to reuse the same CSchema object.
-            py_schema = handler.resolve_ref_schema(py_schema)
-            _visit(py_schema, handler, context)
+            py_schema = context["pydantic_handler"].resolve_ref_schema(py_schema)
+            _visit(py_schema, context)
         # pass on allowed schema types
         case _:
             msg = f"Unsupported schema type: {py_schema['type']}"
@@ -326,7 +343,6 @@ def _visit(
 
 def _visit_model(
     py_schema: cs.ModelSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     if not issubclass(cls := py_schema["cls"], cmodel.CModel):
@@ -348,8 +364,11 @@ def _visit_model(
 
     _visit(
         py_schema["schema"],
-        handler,
-        {"struct_schema": c_schema, "field_schema": _placeholder_struct_field_schema()},
+        {
+            "struct_schema": c_schema,
+            "field_schema": _placeholder_struct_field_schema(),
+            "pydantic_handler": context["pydantic_handler"],
+        },
     )
 
     c_field_schemas = c_schema["field_schemas"].values()
@@ -360,7 +379,6 @@ def _visit_model(
 
 def _visit_model_fields(
     py_schema: cs.ModelFieldsSchema,
-    handler: GetCoreSchemaHandler,
     context: _VisitorContext,
 ) -> None:
     struct_schema = context["struct_schema"]
@@ -369,18 +387,10 @@ def _visit_model_fields(
             variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False)
         )
         struct_schema["field_schemas"][f_name] = c_f_schema
-        _visit(
-            py_f_schema["schema"],
-            handler,
-            {**context, "field_schema": c_f_schema},
-        )
+        _visit(py_f_schema["schema"], {**context, "field_schema": c_f_schema})
 
 
-def _visit_tuple(
-    py_schema: cs.TupleSchema,
-    handler: GetCoreSchemaHandler,
-    context: _VisitorContext,
-) -> None:
+def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
     py_items_schema = py_schema["items_schema"]
     variadic_item_index = py_schema.get("variadic_item_index", -1)
     if variadic_item_index >= 0 and variadic_item_index + 1 != len(py_items_schema):
@@ -403,22 +413,14 @@ def _visit_tuple(
     for i, item_schema in enumerate(py_schema["items_schema"]):
         c_f_schema = _placeholder_struct_field_schema(variable_length=i == variadic_item_index)
         c_schema["field_schemas"][str(i)] = c_f_schema
-        _visit(
-            item_schema,
-            handler,
-            {**context, "field_schema": c_f_schema},
-        )
+        _visit(item_schema, {**context, "field_schema": c_f_schema})
 
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
     _check_c_struct_schema(field_schema, c_schema)
 
 
-def _visit_tagged_union(
-    py_schema: cs.TaggedUnionSchema,
-    handler: GetCoreSchemaHandler,
-    context: _VisitorContext,
-) -> None:
+def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContext) -> None:
     if not isinstance(tag_field := py_schema["discriminator"], str):
         msg = f"Only string discriminators are supported for tagged unions, got {tag_field}"
         raise TypeError(msg)
@@ -427,7 +429,7 @@ def _visit_tagged_union(
     c_choice_fields: Mapping[Hashable, CStructFieldSchema] = {}
     for py_choice_value, py_choice_schema in py_schema["choices"].items():
         fake_field = _placeholder_struct_field_schema()  # captures the choice schema
-        _visit(py_choice_schema, handler, {**context, "field_schema": fake_field})
+        _visit(py_choice_schema, {**context, "field_schema": fake_field})
         c_choice_fields[py_choice_value] = fake_field
     if not c_choice_fields:
         msg = "Tagged unions must have at least one variant"
@@ -519,7 +521,10 @@ def _encoder_schema_from_pydantic_metadata(
     match metadata:
         case {"c_encoded": c_encoded}:
             struct_schema = context["struct_schema"]
-            return c_encoded.get_encoder(struct_schema["endian_type"], struct_schema["size_type"])
+            return c_encoded.get_encoder({
+                "endian_type": struct_schema["endian_type"],
+                "size_type": struct_schema["size_type"],
+            })
         case {"c_format": c_format}:
             return _encoder_schema_from_c_format(c_format, context)
         case _:

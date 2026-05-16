@@ -45,16 +45,16 @@ from typing import Annotated
 
 from cmodel import CEncoded
 from cmodel import CModel
-from cmodel.schema import CEncoderSchema
+from cmodel.schema import CEncoderSchema, CSchemaBuildContext
 
 
-def uint24(endian: str, size: str) -> CEncoderSchema[int]:
-    byteorder = "little" if endian in ("native", "little") else "big"
+def uint24(build_ctx: CSchemaBuildContext) -> CEncoderSchema[int]:
+    byteorder = "little" if build_ctx["endian_type"] in ("native", "little") else "big"
 
-    def unpack(buf, _ctx):  # context unused for fixed-size fields
+    def unpack(buf, _unpack_ctx):  # don't need the context for fixed-size fields
         return int.from_bytes(buf.read(3), byteorder)
 
-    def pack(buf, value, _ctx):  # context unused for fixed-size fields
+    def pack(buf, value, _pack_ctx):  # don't need the context for fixed-size fields
         buf.write(value.to_bytes(3, byteorder))
 
     return CEncoderSchema[int](
@@ -67,7 +67,7 @@ def uint24(endian: str, size: str) -> CEncoderSchema[int]:
     )
 
 
-UInt24 = Annotated[int, CEncoded(get_encoder=uint24)]
+UInt24 = Annotated[int, CEncoded(uint24)]
 
 
 class AudioSample(CModel):
@@ -131,22 +131,22 @@ uint8_t array_data[];
 from typing import Annotated
 
 from cmodel import CEncoded, CModel
-from cmodel.schema import CEncoderSchema
+from cmodel.schema import CEncoderSchema, CSchemaBuildContext
 from cmodel.types import UnsignedChar
 
 
-def sized_bytes(endian: str, size: str) -> CEncoderSchema[bytes]:
+def sized_bytes(build_ctx: CSchemaBuildContext) -> CEncoderSchema[bytes]:
     return CEncoderSchema[bytes](
         type="encoder",
         size=None,  # variable length
         alignment=1,
-        unpack=lambda buf, ctx: buf.read(ctx["preceding_fields"]["array_length"]),
-        pack=lambda buf, value, _ctx: buf.write(value),
+        unpack=lambda buf, unpack_ctx: buf.read(unpack_ctx["preceding_fields"]["array_length"]),
+        pack=lambda buf, value, _pack_ctx: buf.write(value),
         schema_equality_info=("example", "sized_bytes"),
     )
 
 
-SizedBytes = Annotated[bytes, CEncoded(get_encoder=sized_bytes)]
+SizedBytes = Annotated[bytes, CEncoded(sized_bytes)]
 
 
 class ArrayPacket(CModel):

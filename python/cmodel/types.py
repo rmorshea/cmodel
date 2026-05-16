@@ -120,7 +120,7 @@ def c_char(count: int) -> CFormat:
 type RawBytes = An[
     bytes,
     CEncoded(
-        get_encoder=lambda e, s: CEncoderSchema[bytes](
+        get_encoder=lambda _: CEncoderSchema[bytes](
             type="encoder",
             alignment=1,
             size=None,
