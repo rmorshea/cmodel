@@ -11,6 +11,7 @@ from typing import Unpack
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import GetCoreSchemaHandler
+from pydantic import model_validator
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
@@ -41,6 +42,14 @@ class CModel(BaseModel):
     c_size_type: ClassVar[SizeType] = "native"
     """Override the size type of this struct. Native by default."""
 
+    _c_model_validators: ClassVar[dict[str, Callable[[Self], None]]] = {}
+    """A mapping of validator names to functions that take a completed model instance.
+
+    These are populated while constructing the c_schema for this model and run in the order
+    they were added. For example, a variable length tuple with a `CCountField` will add a
+    validator to ensure the length of the tuple matches the count field.
+    """
+
     def __init_subclass__(
         cls,
         *,
@@ -56,6 +65,8 @@ class CModel(BaseModel):
             cls.c_endian_type = c_endian_type
         if c_size_type is not None:
             cls.c_size_type = c_size_type
+        # avoid mutating the parent class' validators
+        cls._c_model_validators = cls._c_model_validators.copy()
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -87,6 +98,12 @@ class CModel(BaseModel):
         """Write this model instance to the current position of a binary buffer."""
         value = self.model_dump()
         pack_c_schema(buffer, self.c_schema, value)
+
+    @model_validator(mode="after")
+    def _c_model_validate(self) -> Self:
+        for check in self._c_model_validators.values():
+            check(self)
+        return self
 
 
 @dataclass
@@ -140,7 +157,7 @@ class CEncoded[T]:
 
 
 @dataclass(kw_only=True)
-class CArrayCount:
+class CCountField:
     """Pydantic annotated metadata defining the element count in a variable length array.
 
     This should be used to annotated a variable length tuple. For example:
@@ -148,18 +165,47 @@ class CArrayCount:
     ```python
     from typing import Annotated as An
 
-    from cmodel import CArrayCount
+    from cmodel import CCountField
     from cmodel import CModel
 
 
     class MyModel(CModel):
         values_count: int
-        values: An[tuple[int, ...], CArrayCount(count_field_suffix="_count")]
+        values: An[tuple[int, ...], CCountField.template("{}_count")]
     ```
     """
 
-    count_field_suffix: str | None = None
-    """Get the count for this field's array from another field with this suffix appended."""
-
-    as_count: Callable[[Any], int] = int
+    get_count_field_name: Callable[[str], str]
+    """Return the field name containing the count of elements, given the name of the array field."""
+    count_field_value_as_int: Callable[[Any], int] | None = None
     """Cast the value of the count field to an int."""
+
+    @classmethod
+    def template(cls, template_str: str, as_int: Callable[[Any], int] | None = None) -> Self:
+        """Create a CCountField with a template string for the count field name.
+
+        Args:
+            template_str:
+                The template string should contain one `{}` placeholder, which will be replaced
+                with the name of the array field to get the name of the count field. For example,
+                `CCountFieldField. template("{}_count")` will create a CCountFieldField that looks
+                for a count field named `<array_field_name>_count` for an array field named
+                `<array_field_name>`.
+            as_int:
+                An optional function to cast the value of the count field to an int. For example,
+                you might have a bitmask field where the count is stored as the number of set bits,
+                and you could pass `lambda x: x.bit_count()` to get the count.
+        """
+        return cls(
+            get_count_field_name=lambda field_name: template_str.format(field_name),
+            count_field_value_as_int=as_int,
+        )
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> cs.CoreSchema:
+        schema = handler(source)
+        _utils.set_pydantic_schema_metadata(schema, {"c_count_field": self})
+        return schema

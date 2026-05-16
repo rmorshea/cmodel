@@ -8,7 +8,7 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
-from cmodel.base import CArrayCount
+from cmodel.base import CCountField
 from cmodel.base import CEncoded
 from cmodel.base import CModel
 from cmodel.schema import CBuildContext
@@ -654,7 +654,7 @@ class _VariableLengthArray(CModel):
     """Model with a variable-length tuple field, where the count is determined by another field."""
 
     values_count: Int
-    values: An[tuple[int, ...], CArrayCount(count_field_suffix="_count")]
+    values: An[tuple[int, ...], CCountField.template("{}_count")]
 
 
 def test_variable_length_tuple():
@@ -666,7 +666,7 @@ def test_variable_length_tuple():
 
 
 def test_handling_incorrect_tuple_length():
-    with pytest.raises(ValueError, match="Expected 3 values in tuple, got 2"):
+    with pytest.raises(ValueError, match="Length of values must be equal to values_count"):
         _VariableLengthArray(values_count=2, values=(10, 20, 30))
 
 
@@ -676,7 +676,7 @@ class _VariableLengthArrayFromBitmask(CModel):
     values_mask: Int
     values: An[
         tuple[int, ...],
-        CArrayCount(count_field_suffix="_mask", as_count=lambda mask: mask.bit_count()),
+        CCountField.template("{}_mask", as_int=int.bit_count),
     ]
 
 
