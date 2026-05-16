@@ -45,7 +45,7 @@ from typing import Annotated
 
 from cmodel import CEncoded
 from cmodel import CModel
-from cmodel.schema import CEncoderSchema, CBuildContext
+from cmodel.schema import CEncoderSchema, CBuildContext, SizeRange
 
 
 def uint24(build_ctx: CBuildContext) -> CEncoderSchema[int]:
@@ -60,6 +60,7 @@ def uint24(build_ctx: CBuildContext) -> CEncoderSchema[int]:
     return CEncoderSchema[int](
         type="encoder",
         size=3,
+        size_range=SizeRange.FIXED,
         alignment=1,
         unpack=unpack,
         pack=pack,

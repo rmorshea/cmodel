@@ -5,6 +5,7 @@ Most CModel usage starts with three building blocks:
 - scalar fields such as integers and floats
 - nested structs
 - fixed-size repeated values
+- variable-length repeated values
 
 This guide shows how to combine them without getting into internal details.
 
@@ -66,6 +67,37 @@ class Triangle(CModel):
 
 The field type stays explicit in Python, and the binary layout stays explicit in the
 format helper.
+
+## Represent variable-length arrays with a count field
+
+When a struct stores array length in a separate field, annotate a variadic tuple with
+[`CCountField`][cmodel.base.CCountField].
+
+```python
+from typing import Annotated
+
+from cmodel import CCountField
+
+
+class Packet(CModel):
+    values_count: Int
+    values: Annotated[tuple[int, ...], CCountField.template("{}_count")]
+```
+
+During unpacking, `values_count` determines how many elements are read for `values`.
+During model validation and packing, the tuple length must match `values_count`.
+
+## Represent unbounded arrays at the end of a struct
+
+When no count field exists, use a variadic tuple with no additional metadata.
+
+```python
+class TrailingData(CModel):
+    values: tuple[int, ...]
+```
+
+This tuple is unbounded: unpacking reads values until the end of the buffer. Because of
+that, this form is intended for trailing fields.
 
 ## Store fixed-length byte strings
 

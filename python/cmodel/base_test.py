@@ -13,6 +13,7 @@ from cmodel.base import CEncoded
 from cmodel.base import CModel
 from cmodel.schema import CBuildContext
 from cmodel.schema import CEncoderSchema
+from cmodel.schema import SizeRange
 from cmodel.types import Bool
 from cmodel.types import Double
 from cmodel.types import Float
@@ -433,6 +434,7 @@ def test_c_encoded_custom_encoder():
             type="encoder",
             alignment=fmt.size,
             size=fmt.size,
+            size_range=SizeRange.FIXED,
             unpack=lambda buf, _: fmt.unpack(buf.read(fmt.size))[0] // 2,
             pack=lambda buf, v, _: buf.write(fmt.pack(v * 2)),
             schema_equality_info=("test", "doubler"),
@@ -464,6 +466,7 @@ def test_c_encoded_receives_endian_and_size_type():
             type="encoder",
             alignment=4,
             size=4,
+            size_range=SizeRange.FIXED,
             unpack=lambda buf, _: fmt.unpack(buf.read(4))[0],
             pack=lambda buf, v, _: buf.write(fmt.pack(v)),
             schema_equality_info=("test", "capture"),

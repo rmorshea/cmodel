@@ -3,8 +3,9 @@
 ### [Model common structs](model-common-structs.md)
 
 Start here for the everyday building blocks of a CModel definition. This guide covers
-scalar fields, nested models, fixed-size repeated values, and fixed-length byte
-strings, then shows how to round-trip a model through bytes to confirm the layout.
+scalar fields, nested models, fixed-size and variable-length repeated values, and
+fixed-length byte strings, then shows how to round-trip a model through bytes to
+confirm the layout.
 
 Read this page first if you are still translating a C struct into Python and want a
 practical baseline before worrying about alignment details.

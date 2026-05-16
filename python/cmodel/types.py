@@ -8,6 +8,7 @@ from uuid import UUID
 from cmodel.base import CEncoded
 from cmodel.base import CFormat
 from cmodel.schema import CEncoderSchema
+from cmodel.schema import SizeRange
 
 
 def _make_one_or_many[T](_: type[T], fmt: str) -> Callable[[int], CFormat[T]]:
@@ -124,6 +125,7 @@ type RawBytes = An[
             type="encoder",
             alignment=1,
             size=None,
+            size_range=SizeRange.UNBOUNDED,
             unpack=lambda buffer, _: buffer.read(),
             pack=lambda buffer, value, _: buffer.write(value),
             schema_equality_info=(__name__, "ByteArray"),

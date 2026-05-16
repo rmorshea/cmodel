@@ -81,6 +81,26 @@ class Triangle(CModel):
     y_coords: Annotated[tuple[int, int, int], c_int(3)]
 ```
 
+Variable-length arrays are modeled with variadic tuples. Use
+[`CCountField`][cmodel.base.CCountField] when another field stores the element count:
+
+```python
+from cmodel import CCountField
+
+
+class CountedPacket(CModel):
+    values_count: Int
+    values: Annotated[tuple[int, ...], CCountField.template("{}_count")]
+```
+
+Or use an unbounded trailing array with `tuple[T, ...]`, which reads until the end of
+the buffer:
+
+```python
+class TrailingPacket(CModel):
+    payload_words: tuple[int, ...]
+```
+
 If you need a packed layout with no implicit alignment padding, set [`c_alignment`][cmodel.base.CModel.c_alignment] to `1`:
 
 ```python

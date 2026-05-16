@@ -160,7 +160,8 @@ class CEncoded[T]:
 class CCountField:
     """Pydantic annotated metadata defining the element count in a variable length array.
 
-    This should be used to annotated a variable length tuple. For example:
+    This should be used to annotate a variadic tuple (``tuple[T, ...]``) when the number
+    of elements is stored in another field. For example:
 
     ```python
     from typing import Annotated as An
@@ -173,6 +174,9 @@ class CCountField:
         values_count: int
         values: An[tuple[int, ...], CCountField.template("{}_count")]
     ```
+
+    By contrast, a bare ``tuple[T, ...]`` with no ``CCountField`` is treated as an
+    unbounded trailing array that reads until the end of the buffer.
     """
 
     get_count_field_name: Callable[[str], str]

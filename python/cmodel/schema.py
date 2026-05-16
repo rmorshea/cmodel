@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Mapping
+from enum import IntEnum
 from io import BytesIO
 from operator import itemgetter
 from struct import Struct
@@ -28,6 +29,17 @@ type EndianType = Literal["native", "little", "big", "network"]
 """The endianness of a C format."""
 type SizeType = Literal["standard", "native"]
 """Whether to use standard sizes for C types or native sizes."""
+
+
+class SizeRange(IntEnum):
+    """Describes whether a size is fixed, unbounded, or bounded."""
+
+    FIXED = 0
+    """Size is fixed and known at compile time."""
+    BOUNDED = 1
+    """Size is variable but bounded, perhaps by another field in a struct."""
+    UNBOUNDED = 2
+    """Size is variable and unbounded, unbounded size fields must be last in a struct."""
 
 
 type Prefix = Literal["@", "=", "<", ">", "!"]
@@ -93,7 +105,9 @@ class CEncoderSchema[T](TypedDict):
     type: Literal["encoder"]
 
     size: int | None
-    """The size of this value in bytes - None if variable length."""
+    """The size of this value in bytes - None if bounded or unbounded length."""
+    size_range: SizeRange
+    """Whether this value has a fixed size, variable but bounded size, or unbounded size."""
     alignment: int
     """The alignment requirement of this value in bytes."""
     unpack: Callable[[BytesIO, CUnpackContext], T]
@@ -135,8 +149,8 @@ class CStructFieldSchema(TypedDict):
 
     schema: "CSchema"
     """The schema for this field, which may be a CFormatSchema for a simple field or a nested"""
-    variable_length: bool
-    """Whether this field consumes the rest of the buffer when unpacking."""
+    size_range: SizeRange
+    """Whether this fields size is fixed, unbounded, or bounded."""
 
 
 class CTaggedUnionSchema(TypedDict):
@@ -430,9 +444,7 @@ def _visit_model_fields(
 ) -> None:
     struct_schema = context["struct_schema"]
     for f_name, py_f_schema in py_schema["fields"].items():
-        c_f_schema = _placeholder_struct_field_schema(
-            variable_length=py_f_schema.get("extra", {}).get("c_variable_length", False)
-        )
+        c_f_schema = _placeholder_struct_field_schema()
         struct_schema["field_schemas"][f_name] = c_f_schema
         _visit(py_f_schema["schema"], {**context, "field_name": f_name, "field_schema": c_f_schema})
 
@@ -456,7 +468,7 @@ def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
     field_schema["schema"] = c_schema
 
     for i, item_schema in enumerate(py_schema["items_schema"]):
-        c_f_schema = _placeholder_struct_field_schema(variable_length=False)
+        c_f_schema = _placeholder_struct_field_schema()
         c_schema["field_schemas"][str(i)] = c_f_schema
         _visit(item_schema, {**context, "field_schema": c_f_schema})
 
@@ -480,7 +492,7 @@ def _visit_variadic_tuple(
         msg = "Tuple schemas with variadic_item_index must have variadic_item_index set to 0"
         raise ValueError(msg)
 
-    c_item_field_schema = _placeholder_struct_field_schema(variable_length=True)
+    c_item_field_schema = _placeholder_struct_field_schema()
     _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
     c_array_schema = CArraySchema(
         type="array",
@@ -490,7 +502,7 @@ def _visit_variadic_tuple(
     )
 
     context["field_schema"]["schema"] = c_array_schema
-    context["field_schema"]["variable_length"] = True
+    context["field_schema"]["size_range"] = SizeRange.UNBOUNDED
 
 
 def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContext) -> None:
@@ -508,10 +520,8 @@ def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContex
         msg = "Tagged unions must have at least one variant"
         raise ValueError(msg)
 
-    # The above mechanism allows us to check whether the choices are variable length or not.
-    variable_length_values = [c["variable_length"] for c in c_choice_fields.values()]
-    if any(variable_length_values):
-        context["field_schema"]["variable_length"] = True
+    # The above mechanism allows us to get the overall size range of the tagged union
+    context["field_schema"]["size_range"] = max(c["size_range"] for c in c_choice_fields.values())
 
     # Now we can build the tagged union schema using the captured choice schemas.
     c_choices = {k: v["schema"] for k, v in c_choice_fields.items()}
@@ -564,15 +574,24 @@ def _make_uuid_schema(context: _VisitorContext) -> CEncoderSchema:
 
 
 def _check_c_struct_schema(
-    field_schema: CStructFieldSchema,
+    owner_field_schema: CStructFieldSchema,
     c_schema: CStructSchema,
 ) -> None:
-    for f_index, f_schema in enumerate(c_schema["field_schemas"].values()):
-        if f_schema["variable_length"]:
-            if f_index != len(c_schema["field_schemas"]) - 1:
-                msg = "Variable length fields must be the last field in a struct"
-                raise ValueError(msg)
-            field_schema["variable_length"] = True
+    if not c_schema["field_schemas"]:
+        return
+
+    *first_field_schemas_items, _ = c_schema["field_schemas"].items()
+    for f_name, f_schema in first_field_schemas_items:
+        if f_schema["size_range"] == SizeRange.UNBOUNDED:
+            msg = (
+                f"Unbounded variable length field '{f_name}' must be the last "
+                f"field in {_get_struct_name(c_schema)}"
+            )
+            raise ValueError(msg)
+
+    owner_field_schema["size_range"] = max(
+        s["size_range"] for s in c_schema["field_schemas"].values()
+    )
 
 
 def _simple_format_schema(fmt: str, context: _VisitorContext) -> CEncoderSchema:
@@ -614,8 +633,10 @@ def _visit_c_encoded_metadata(
         "size_type": context["struct_schema"]["size_type"],
     })
     context["field_schema"]["schema"] = c_schema
-    if c_schema["size"] is None:
-        context["field_schema"]["variable_length"] = True
+    context["field_schema"]["size_range"] = c_schema["size_range"]
+    if c_schema["size"] is not None and c_schema["size_range"] != SizeRange.FIXED:
+        msg = "CEncoded schemas with a known size must have size_range set to SizeRange.FIXED"
+        raise ValueError(msg)
 
 
 def _visit_c_format_metadata(
@@ -624,8 +645,8 @@ def _visit_c_format_metadata(
 ) -> None:
     c_schema = _encoder_schema_from_c_format(c_format, context)
     context["field_schema"]["schema"] = c_schema
-    if c_schema["size"] is None:
-        context["field_schema"]["variable_length"] = True
+    # CFormat always has a fixed size
+    context["field_schema"]["size_range"] = SizeRange.FIXED
 
 
 def _visit_c_count_field_metadata(
@@ -660,14 +681,11 @@ def _visit_c_count_field_metadata(
     count_field_name = c_count_field.get_count_field_name(field_name)
     if count_field_name not in context["struct_schema"]["field_schemas"]:
         struct_schema = context["struct_schema"]
-        if struct_schema_cls := struct_schema.get("cls"):
-            msg = (
-                f"Count field {count_field_name} not found in struct schema for "
-                f"{struct_schema_cls.__name__}"
-            )
-        else:
-            msg = f"Count field {count_field_name} not found in struct schema"
-            raise ValueError(msg)
+        msg = (
+            f"Count field {count_field_name} not found in struct schema for "
+            f"{_get_struct_name(struct_schema)}"
+        )
+        raise ValueError(msg)
 
     count_field_as_int = c_count_field.count_field_value_as_int or int
 
@@ -684,7 +702,7 @@ def _visit_c_count_field_metadata(
     validator_name = f"c_count_field_{field_name}"
     struct_schema_cls._c_model_validators[validator_name] = model_validator  # noqa: SLF001
 
-    c_item_field_schema = _placeholder_struct_field_schema(variable_length=True)
+    c_item_field_schema = _placeholder_struct_field_schema()
     _visit(py_item_schema, {**context, "field_schema": c_item_field_schema})
     c_array_schema = CArraySchema(
         type="array",
@@ -698,7 +716,7 @@ def _visit_c_count_field_metadata(
     )
 
     context["field_schema"]["schema"] = c_array_schema
-    context["field_schema"]["variable_length"] = True
+    context["field_schema"]["size_range"] = SizeRange.BOUNDED
 
 
 def _encoder_schema_from_c_format(
@@ -722,6 +740,7 @@ def _encoder_schema_from_c_format(
     return CEncoderSchema(
         type="encoder",
         size=fmt_size,
+        size_range=SizeRange.FIXED,
         alignment=_utils.get_format_alignment(prefix, c_format.format),
         unpack=lambda io, _: c_format.validate(fmt_unpack(io.read(fmt_size))),
         pack=lambda io, value, _: io.write(fmt_pack(*c_format.dump(value))),
@@ -746,13 +765,13 @@ def _placeholder_struct_schema(
     )
 
 
-def _placeholder_struct_field_schema(*, variable_length: bool = False) -> CStructFieldSchema:
+def _placeholder_struct_field_schema() -> CStructFieldSchema:
     """Return a placeholder CStructFieldSchema that can be used to build up a CStructSchema."""
     return CStructFieldSchema(
         type="struct-field",
         # The schema needs to be filled in later by a visitor
         schema=None,  # pyright: ignore[reportArgumentType]
-        variable_length=variable_length,
+        size_range=SizeRange.FIXED,  # placeholder, will be updated by visitor if needed
     )
 
 
@@ -780,3 +799,11 @@ def _next_padding(
         else struct_align
     )
     return (next_align - (position % next_align)) % next_align
+
+
+def _get_struct_name(struct_schema: CStructSchema) -> str:
+    """Get the name of a struct schema for error messages."""
+    if cls := struct_schema.get("cls"):
+        return cls.__name__
+    else:
+        return "anonymous struct"
