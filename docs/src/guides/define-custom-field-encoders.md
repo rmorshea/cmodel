@@ -45,10 +45,10 @@ from typing import Annotated
 
 from cmodel import CEncoded
 from cmodel import CModel
-from cmodel.schema import CEncoderSchema, CSchemaBuildContext
+from cmodel.schema import CEncoderSchema, CBuildContext
 
 
-def uint24(build_ctx: CSchemaBuildContext) -> CEncoderSchema[int]:
+def uint24(build_ctx: CBuildContext) -> CEncoderSchema[int]:
     byteorder = "little" if build_ctx["endian_type"] in ("native", "little") else "big"
 
     def unpack(buf, _unpack_ctx):  # don't need the context for fixed-size fields

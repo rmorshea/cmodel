@@ -14,8 +14,8 @@ from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema as cs
 
 from cmodel import _utils
+from cmodel.schema import CBuildContext
 from cmodel.schema import CEncoderSchema
-from cmodel.schema import CSchemaBuildContext
 from cmodel.schema import CStructSchema
 from cmodel.schema import EndianType
 from cmodel.schema import SizeType
@@ -126,7 +126,7 @@ class CFormat[T]:
 class CEncoded[T]:
     """Pydantic annotated metadata declaring how to pack/unpack a value from a C encoded buffer."""
 
-    get_encoder: Callable[[CSchemaBuildContext], CEncoderSchema[T]]
+    get_encoder: Callable[[CBuildContext], CEncoderSchema[T]]
     """A function returning a CEncoderSchema for this value given an endianness and size type."""
 
     def __get_pydantic_core_schema__(
@@ -137,3 +137,29 @@ class CEncoded[T]:
         schema = handler(source)
         _utils.set_pydantic_schema_metadata(schema, {"c_encoded": self})
         return schema
+
+
+@dataclass(kw_only=True)
+class CArrayCount:
+    """Pydantic annotated metadata defining the element count in a variable length array.
+
+    This should be used to annotated a variable length tuple. For example:
+
+    ```python
+    from typing import Annotated as An
+
+    from cmodel import CArrayCount
+    from cmodel import CModel
+
+
+    class MyModel(CModel):
+        values_count: int
+        values: An[tuple[int, ...], CArrayCount(count_field_suffix="_count")]
+    ```
+    """
+
+    count_field_suffix: str | None = None
+    """Get the count for this field's array from another field with this suffix appended."""
+
+    as_count: Callable[[Any], int] = int
+    """Cast the value of the count field to an int."""

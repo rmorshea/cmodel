@@ -76,7 +76,7 @@ class CUnpackContext(TypedDict):
     """The name of the field being unpacked."""
 
 
-class CSchemaBuildContext(TypedDict):
+class CBuildContext(TypedDict):
     """Context passed to functions that build C schemas."""
 
     endian_type: EndianType
@@ -390,8 +390,8 @@ def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
     py_items_schema = py_schema["items_schema"]
     variadic_item_index = py_schema.get("variadic_item_index", -1)
     if variadic_item_index >= 0 and variadic_item_index + 1 != len(py_items_schema):
-        msg = "CModel does not support variadic tuples"
-        raise ValueError(msg)
+        _visit_variadic_tuple(py_schema, variadic_item_index, context)
+        return
 
     # Tuples are treated as anonymous structs
     c_schema = CStructSchema(
@@ -414,6 +414,13 @@ def _visit_tuple(py_schema: cs.TupleSchema, context: _VisitorContext) -> None:
     c_schema["alignment"] = _utils.get_field_schema_alignment(c_schema["field_schemas"].values())
 
     _check_c_struct_schema(field_schema, c_schema)
+
+
+def _visit_variadic_tuple(
+    py_schema: cs.TupleSchema,
+    variadic_item_index: int,
+    context: _VisitorContext,
+) -> None: ...
 
 
 def _visit_tagged_union(py_schema: cs.TaggedUnionSchema, context: _VisitorContext) -> None:

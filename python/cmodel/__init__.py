@@ -2,6 +2,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
 from cmodel import types as types
+from cmodel.base import CArrayCount as CArrayCount
 from cmodel.base import CEncoded as CEncoded
 from cmodel.base import CFormat as CFormat
 from cmodel.base import CModel as CModel

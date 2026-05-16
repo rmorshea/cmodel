@@ -8,8 +8,10 @@ from typing import Literal
 import pytest
 from pydantic import Discriminator
 
+from cmodel.base import CArrayCount
 from cmodel.base import CEncoded
 from cmodel.base import CModel
+from cmodel.schema import CBuildContext
 from cmodel.schema import CEncoderSchema
 from cmodel.types import Bool
 from cmodel.types import Double
@@ -424,8 +426,8 @@ def test_c_encoded_raw_bytes_empty_trailing():
 def test_c_encoded_custom_encoder():
     """CEncoded with custom fixed-size encoder that doubles an int on pack and halves on unpack."""
 
-    def make_encoder(endian: str, size: str) -> CEncoderSchema[int]:
-        prefix = {"native": "@", "little": "<", "big": ">"}[endian]
+    def make_encoder(build_ctx: CBuildContext) -> CEncoderSchema[int]:
+        prefix = {"native": "@", "little": "<", "big": ">"}[build_ctx["endian_type"]]
         fmt = struct.Struct(f"{prefix}i")
         return CEncoderSchema[int](
             type="encoder",
@@ -454,9 +456,9 @@ def test_c_encoded_receives_endian_and_size_type():
     """Verify encoder factory receives struct's endian_type and size_type."""
     captured = {}
 
-    def capturing_encoder(endian: str, size: str) -> CEncoderSchema[int]:
-        captured["endian"] = endian
-        captured["size"] = size
+    def capturing_encoder(build_ctx: CBuildContext) -> CEncoderSchema[int]:
+        captured["endian"] = build_ctx["endian_type"]
+        captured["size"] = build_ctx["size_type"]
         fmt = struct.Struct("<i")
         return CEncoderSchema[int](
             type="encoder",
@@ -646,3 +648,41 @@ def test_nested_mixed_alignment_roundtrip():
     original.c_pack(buf)
     buf.seek(0)
     assert OuterMixed.c_unpack(buf) == original
+
+
+class _VariableLengthArray(CModel):
+    """Model with a variable-length tuple field, where the count is determined by another field."""
+
+    values_count: Int
+    values: An[tuple[int, ...], CArrayCount(count_field_suffix="_count")]
+
+
+def test_variable_length_tuple():
+    original = _VariableLengthArray(values_count=3, values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _VariableLengthArray.c_unpack(buf) == original
+
+
+def test_handling_incorrect_tuple_length():
+    with pytest.raises(ValueError, match="Expected 3 values in tuple, got 2"):
+        _VariableLengthArray(values_count=2, values=(10, 20, 30))
+
+
+class _VariableLengthArrayFromBitmask(CModel):
+    """Model with a variable-length tuple field, where the count comes from a bitmask of flags."""
+
+    values_mask: Int
+    values: An[
+        tuple[int, ...],
+        CArrayCount(count_field_suffix="_mask", as_count=lambda mask: mask.bit_count()),
+    ]
+
+
+def test_variable_length_tuple_from_bitmask():
+    original = _VariableLengthArrayFromBitmask(values_mask=0b1011, values=(10, 20, 30))
+    buf = BytesIO()
+    original.c_pack(buf)
+    buf.seek(0)
+    assert _VariableLengthArrayFromBitmask.c_unpack(buf) == original
