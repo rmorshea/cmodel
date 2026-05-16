@@ -72,8 +72,6 @@ class CUnpackContext(TypedDict):
 
     struct_schema: "CStructSchema"
     """The schema of the struct currently being packed."""
-    preceding_fields: Mapping[str, Any]
-    """The fields that have been unpacked so far in the current struct, keyed by field name."""
     field_name: str
     """The name of the field being unpacked."""
 
@@ -160,7 +158,6 @@ def unpack_c_schema(io: BytesIO, schema: CSchema) -> Any:
         schema,
         {
             "field_name": "",
-            "preceding_fields": {},
             "struct_schema": _placeholder_struct_schema(anonymous=True),
         },
     )
@@ -178,7 +175,7 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 tuple_values: list[Any] = []
                 field_list = tuple(field_schemas.values())
                 # anonymous struct can't refer to preceding fields by name
-                context = {"struct_schema": schema, "preceding_fields": {}, "field_name": ""}
+                context = {"struct_schema": schema, "field_name": ""}
                 for idx, s in enumerate(field_list):
                     tuple_values.append(_unpack_c_schema(io, s["schema"], context))
                     io.seek(_next_padding(io.tell(), idx, field_list, alignment), 1)
@@ -187,7 +184,6 @@ def _unpack_c_schema(io: BytesIO, schema: CSchema, context: CUnpackContext) -> A
                 dict_values: dict[str, Any] = {}
                 context = {
                     "struct_schema": schema,
-                    "preceding_fields": dict_values,
                     "field_name": "",  # placeholder, will be set correctly in loop
                 }
                 field_list = tuple(field_schemas.values())
