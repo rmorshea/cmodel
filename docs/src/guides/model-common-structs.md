@@ -71,7 +71,7 @@ format helper.
 ## Represent variable-length arrays with a count field
 
 When a struct stores array length in a separate field, you can use a `CountedArray`. This
-requires the field contianing the count to be named `{field_name}_count` where `{field_name}` is 
+requires the field contianing the count to be named `{field_name}_count` where `{field_name}` is
 the name of the array field.
 
 ```python
