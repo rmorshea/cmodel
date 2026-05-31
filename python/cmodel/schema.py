@@ -17,6 +17,7 @@ from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema as cs
 
 import cmodel
+from cmodel import _rust
 from cmodel import _utils
 
 if TYPE_CHECKING:
@@ -320,6 +321,13 @@ def _pack_c_schema(io: BytesIO, schema: CSchema, value: Any, context: CPackConte
         case _:
             msg = f"Unsupported schema type: {schema['type']}"
             raise TypeError(msg)
+
+
+if _rust.USE_RUST and _rust.HAS_RUST:
+    python_unpack_c_schema = _unpack_c_schema
+    python_pack_c_schema = _pack_c_schema
+    _unpack_c_schema = _rust.lib.unpack_c_schema
+    _pack_c_schema = _rust.lib.pack_c_schema
 
 
 def c_schema_from_pydantic_core_schema(
