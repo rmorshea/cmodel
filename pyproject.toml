@@ -1,6 +1,6 @@
 [build-system]
-requires = ["uv_build>=0.10.3,<0.11.0"]
-build-backend = "uv_build"
+requires = ["maturin>=1.13,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "cmodel"
@@ -28,6 +28,7 @@ dev = [
     { include-group = "docs" },
     { include-group = "lint" },
     { include-group = "test" },
+    "maturin>=1.13.3",
 ]
 util = [
     "click==8.1.7",
@@ -185,7 +186,9 @@ compare_branch = "origin/main"
 fail_under = 100
 include_untracked = true
 
+[tool.maturin]
+python-source = "python"
+module-name = "cmodel._lib"
+
 [tool.uv.build-backend]
-module-name = "cmodel"
-module-root = "python"
-source-exclude = ["test", "tests", "conftest.py", "*_test.py", "test_*.py"]
+exclude = ["test", "tests", "conftest.py", "*_test.py", "test_*.py", "test.py"]

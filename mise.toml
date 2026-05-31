@@ -1,4 +1,5 @@
 [tools]
+rust = "latest"
 uv = "0.10.0"
 
 [tasks.test]
